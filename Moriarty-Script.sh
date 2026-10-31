@@ -147,7 +147,7 @@ ipv6.ip6-privacy=2
 EOF
 printf '[main]\ndns=none\n' > /etc/NetworkManager/conf.d/90-dns-none.conf
 nmcli general reload 2>/dev/null || true
-for c in $(nmcli -t -f NAME,TYPE connection show 2>/dev/null | grep ':802-3-ethernet$\|:802-11-wireless$' | cut -d: -f1); do
+nmcli -t -f NAME,TYPE connection show 2>/dev/null | grep -E ':802-3-ethernet$|:802-11-wireless$' | cut -d: -f1 | while IFS= read -r c; do
   nmcli connection modify "$c" ipv4.ignore-auto-dns yes ipv6.ignore-auto-dns yes ipv4.dns "" ipv6.dns "" 2>/dev/null || true
 done
 ok "NetworkManager ready"
