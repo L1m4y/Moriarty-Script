@@ -10,7 +10,7 @@ BK="/root/opsec-backup.$TS"
 mkdir -p "$BK"
 echo -e "${B}== OPSEC MORIARTY ==${N}"
 echo -e "${B}[1/8] Dependencies${N}"
-pacman -S --needed --noconfirm dnscrypt-proxy bind >/dev/null 2>&1
+pacman -S --needed --noconfirm dnscrypt-proxy bind || fail "dependency install failed (check network/mirrors)"
 ok "dnscrypt-proxy + dig"
 cp -a /etc/sysctl.conf "$BK"/ 2>/dev/null || true
 [ -d /etc/sysctl.d ] && cp -a /etc/sysctl.d "$BK"/sysctl.d 2>/dev/null || true
@@ -127,6 +127,7 @@ EOF
 fi
 ok "systemd.link ready"
 echo -e "${B}[5/8] NetworkManager: MAC+IP per boot, no hostname, private IPv6${N}"
+command -v nmcli >/dev/null 2>&1 || fail "NetworkManager is required"
 mkdir -p /etc/NetworkManager/conf.d
 cat > /etc/NetworkManager/conf.d/00-mac-ip-randomize.conf << 'EOF'
 [device]
@@ -175,9 +176,17 @@ echo -e "${B}[7/8] resolved dnscrypt-only + silent avahi + ufw${N}"
 mkdir -p /etc/systemd/resolved.conf.d
 printf '[Resolve]\nDNS=127.0.0.1\nFallbackDNS=\nLLMNR=no\nMulticastDNS=no\nDNSSEC=no\n' > /etc/systemd/resolved.conf.d/moriarty-dns.conf
 systemctl restart systemd-resolved 2>/dev/null || true
-sed -i 's/^#*disable-publishing=.*/disable-publishing=yes/' /etc/avahi/avahi-daemon.conf 2>/dev/null || true
-systemctl restart avahi-daemon 2>/dev/null || true
-sed -i 's|^net/ipv4/conf/default/rp_filter=1|#net/ipv4/conf/default/rp_filter=1|;s|^net/ipv4/conf/all/rp_filter=1|#net/ipv4/conf/all/rp_filter=1|' /etc/ufw/sysctl.conf 2>/dev/null || true
+if [ -f /etc/avahi/avahi-daemon.conf ]; then
+  sed -i 's/^#*disable-publishing=.*/disable-publishing=yes/' /etc/avahi/avahi-daemon.conf || true
+  systemctl restart avahi-daemon 2>/dev/null || true
+else
+  warn "avahi not installed - skipping"
+fi
+if [ -f /etc/ufw/sysctl.conf ]; then
+  sed -i 's|^net/ipv4/conf/default/rp_filter=1|#net/ipv4/conf/default/rp_filter=1|;s|^net/ipv4/conf/all/rp_filter=1|#net/ipv4/conf/all/rp_filter=1|' /etc/ufw/sysctl.conf || true
+else
+  warn "ufw not installed - no active firewall"
+fi
 sysctl -w net.ipv4.conf.all.rp_filter=2 >/dev/null 2>&1 || true
 ok "resolved/avahi/ufw done"
 echo -e "${B}[8/8] Verification${N}"
