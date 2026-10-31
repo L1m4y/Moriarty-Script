@@ -2,9 +2,9 @@
 
 <div align="center">
 
-<img src="assets/Moriarty-Icon.png" alt="Moriarty-Script" width="140"/>
+<img src="assets/Moriarty-Logo.png" alt="Moriarty-Script" width="480"/>
 
-# Moriarty-Script
+#
 
 **One-shot OPSEC hardening for Arch Linux.**
 
