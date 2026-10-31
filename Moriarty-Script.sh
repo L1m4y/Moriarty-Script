@@ -117,14 +117,13 @@ OriginalName=en*
 [Link]
 MACAddressPolicy=random
 EOF
-if ls /sys/class/net 2>/dev/null | grep -qE '^(wl|wlan)'; then
+# unconditional: harmless without Wi-Fi, future-proof if a card appears later
 cat > /etc/systemd/network/11-moriarty-random-mac-wifi.link << 'EOF'
 [Match]
 OriginalName=wl*
 [Link]
 MACAddressPolicy=random
 EOF
-fi
 ok "systemd.link ready"
 echo -e "${B}[5/8] NetworkManager: MAC+IP per boot, no hostname, private IPv6${N}"
 command -v nmcli >/dev/null 2>&1 || fail "NetworkManager is required"
@@ -133,12 +132,16 @@ cat > /etc/NetworkManager/conf.d/00-mac-ip-randomize.conf << 'EOF'
 [device]
 wifi.scan-rand-mac-address=yes
 [connection]
-ethernet.cloned-mac-address=random
-wifi.cloned-mac-address=random
+# RFC 7844-inspired per-boot identity: stable within a boot,
+# new identity after every reboot (${BOOT} in the stable-id).
+# Refs: NM examples/nm-conf.d/30-anon.conf, Fedora Magazine MAC randomization guide
 connection.stable-id=${CONNECTION}/${BOOT}
+ethernet.cloned-mac-address=stable
+wifi.cloned-mac-address=stable
 ipv4.dhcp-client-id=stable
 ipv4.dhcp-send-hostname=false
 ipv6.dhcp-send-hostname=false
+ipv6.dhcp-duid=ll
 ipv6.addr-gen-mode=stable-privacy
 ipv6.ip6-privacy=2
 EOF
