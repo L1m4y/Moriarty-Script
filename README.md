@@ -2,17 +2,17 @@
 
 <div align="center">
 
-<img src="assets/Moriarty-Logo.jpg" alt="Moriarty-Script" width="480"/>
+<img src="assets/Moriarty-Icon.png" alt="Moriarty-Script" width="192"/>
 
-#
+<h1>Moriarty</h1>
 
 **One-shot OPSEC hardening for Arch Linux.**
 
 Turn your machine into a moving target — randomized hardware identity, encrypted DNS and a locked-down kernel, in a single command.
 
-[![OS](https://img.shields.io/badge/OS-Arch_Linux-1793D1?logo=archlinux&logoColor=white)](https://archlinux.org)
-[![Shell](https://img.shields.io/badge/Shell-Bash-121011?logo=gnubash&logoColor=white)](https://www.gnu.org/software/bash/)
-[![License](https://img.shields.io/badge/License-GPL_v3-blue.svg)](LICENSE)
+[![OS](https://img.shields.io/badge/OS-Arch_Linux-D42F3F?logo=archlinux&logoColor=E7E7DB)](https://archlinux.org)
+[![Shell](https://img.shields.io/badge/Shell-Bash-FF9700?logo=gnubash&logoColor=E7E7DB)](https://www.gnu.org/software/bash/)
+[![License](https://img.shields.io/badge/License-GPL_v3-D42F3F?logo=open-source-initiative&logoColor=E7E7DB)](LICENSE)
 
 </div>
 
