@@ -20,6 +20,7 @@ echo -e "${B}[2/8] Sysctl hardening${N}"
 cat > /etc/sysctl.d/99-hardening.conf << 'EOF'
 kernel.kptr_restrict = 2
 kernel.dmesg_restrict = 1
+kernel.printk = 3 3 3 3
 kernel.randomize_va_space = 2
 vm.mmap_rnd_bits = 32
 vm.mmap_rnd_compat_bits = 16
@@ -28,7 +29,7 @@ kernel.yama.ptrace_scope = 1
 kernel.unprivileged_bpf_disabled = 1
 net.core.bpf_jit_harden = 2
 kernel.kexec_load_disabled = 1
-kernel.sysrq = 176
+kernel.sysrq = 0
 dev.tty.ldisc_autoload = 0
 vm.unprivileged_userfaultfd = 0
 kernel.io_uring_disabled = 1
