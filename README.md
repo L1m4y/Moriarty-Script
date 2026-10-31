@@ -24,9 +24,9 @@ Turn your machine into a moving target — randomized hardware identity, encrypt
 |:-:|-------|-------------|
 | 1 | **Dependencies** | Installs `dnscrypt-proxy` and `bind` (`dig`) via pacman |
 | 2 | **Kernel hardening** | 90+ hardened `sysctl` values: hides kernel pointers & dmesg, full ASLR, restricts ptrace/BPF/io_uring, hardened TCP stack, strict ARP filtering, disables `kexec`, SysRq and core dumps |
-| 3 | **Module blacklist** | Disables ~25 obscure network protocols and filesystems (`dccp`, `sctp`, `x25`, `atm`, `hfs`, `cramfs`...) so they can never be loaded |
+| 3 | **Module blacklist** | Disables ~25 obscure network protocols and filesystems (`dccp`, `sctp`, `x25`, `atm`, `hfs`, `cramfs`...) so they can never be loaded (note: `squashfs` included, so live ISO boots won't mount it) |
 | 4 | **MAC randomization** | `systemd.link` rules giving ethernet (and Wi-Fi, if present) a **new MAC address on every boot** |
-| 5 | **NetworkManager** | Random MAC + IP lease per connection boot — no hostname leaks over DHCP, private IPv6 with `stable-privacy` addressing |
+| 5 | **NetworkManager** | RFC 7844-inspired per-boot identity: MAC and DHCP identity **stable within a boot, rotating after every reboot** — no hostname leaks over DHCP, private IPv6 |
 | 6 | **Encrypted DNS** | `dnscrypt-proxy` on `127.0.0.1:53` with DNSSEC-required, no-log resolvers — NetworkManager's own DNS is cut off |
 | 7 | **resolved / avahi / ufw** | `systemd-resolved` queries only through dnscrypt, LLMNR & mDNS disabled, avahi publishing silenced, ufw `rp_filter` fixed |
 | 8 | **Verification** | Prints kernel values, DNS status and checks for any remaining foreign DNS servers |
@@ -80,8 +80,8 @@ sudo bash Moriarty-Script.sh
 
 ## Behavior & safety
 
-- Every file it overwrites is backed up first to `/root/opsec-backup.<timestamp>/`, including `/etc/resolv.conf` and `sysctl.d`
-- DNS is verified with `dig` at the end — if dnscrypt fails to start, the script **aborts** instead of leaving you without resolution
+- Every file it overwrites is backed up first to `/root/opsec-backup.<timestamp>/`, preserving the original `/etc` path — every touched config is included
+- DNS is verified with `dig` using automatic retries (the first dnscrypt start may download the resolver list) — if dnscrypt fails to start, the script **aborts** instead of leaving you without resolution
 - The verification phase prints `sysctl` values, DNS status and warns if foreign DNS servers (router/ISP/Google/Cloudflare) are still reachable
 - Settings persist across reboots; identity (MAC/IP) changes on every boot
 
