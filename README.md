@@ -1,0 +1,2 @@
+# Moriarty-Script
+opsec
