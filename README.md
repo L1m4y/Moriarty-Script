@@ -2,7 +2,7 @@
 
 <div align="center">
 
-<img src="assets/Moriarty-Logo.png" alt="Moriarty-Script" width="480"/>
+<img src="assets/Moriarty-Logo.jpg" alt="Moriarty-Script" width="480"/>
 
 #
 
@@ -12,7 +12,7 @@ Turn your machine into a moving target — randomized hardware identity, encrypt
 
 [![OS](https://img.shields.io/badge/OS-Arch_Linux-1793D1?logo=archlinux&logoColor=white)](https://archlinux.org)
 [![Shell](https://img.shields.io/badge/Shell-Bash-121011?logo=gnubash&logoColor=white)](https://www.gnu.org/software/bash/)
-[![License](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-GPL_v3-blue.svg)](LICENSE)
 
 </div>
 
