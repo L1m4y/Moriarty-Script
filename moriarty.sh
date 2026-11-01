@@ -30,6 +30,7 @@ Usage: sudo ./$PROG [options]
 Options:
   -h, --help       Show this help and exit
   -V, --version    Show the version and exit
+  -n, --dry-run    Show what would change without modifying the system
   -y, --yes        Do not ask for confirmation
       --no-color   Disable colored output
 EOF
@@ -37,10 +38,12 @@ EOF
 
 ASSUME_YES=0
 USE_COLOR=1
+DRY_RUN=0
 while [ $# -gt 0 ]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
     -V|--version) echo "$PROG $VERSION"; exit 0 ;;
+    -n|--dry-run) DRY_RUN=1 ;;
     -y|--yes) ASSUME_YES=1 ;;
     --no-color) USE_COLOR=0 ;;
     *) fail "unknown option: $1 (try --help)" ;;
@@ -52,9 +55,11 @@ if [ "$USE_COLOR" -eq 0 ]; then
   R=''; G=''; Y=''; B=''; N=''
 fi
 
-[ "$EUID" -ne 0 ] && fail "run as root: sudo bash $0"
+if [ "$DRY_RUN" -ne 1 ]; then
+  [ "$EUID" -ne 0 ] && fail "run as root: sudo bash $0"
+fi
 
-if [ "$ASSUME_YES" -ne 1 ]; then
+if [ "$ASSUME_YES" -ne 1 ] && [ "$DRY_RUN" -ne 1 ]; then
   if [ ! -t 0 ]; then
     fail "non-interactive shell: use --yes"
   fi
@@ -67,16 +72,31 @@ if [ "$ASSUME_YES" -ne 1 ]; then
 fi
 
 TS=$(date +%Y%m%d_%H%M%S)
-BK="/root/opsec-backup.$TS"
-MANIFEST="$BK/MANIFEST"
-mkdir -p "$BK" || fail "cannot create backup directory $BK"
-chmod 700 "$BK"
-: > "$MANIFEST" || fail "cannot write $MANIFEST"
+if [ "$DRY_RUN" -eq 1 ]; then
+  BK="/root/opsec-backup.DRYRUN"
+  MANIFEST=/dev/null
+else
+  BK="/root/opsec-backup.$TS"
+  MANIFEST="$BK/MANIFEST"
+  mkdir -p "$BK" || fail "cannot create backup directory $BK"
+  chmod 700 "$BK"
+  : > "$MANIFEST" || fail "cannot write $MANIFEST"
+fi
+
+# Run a state-changing command, or print it in dry-run mode.
+run() {
+  if [ "$DRY_RUN" -eq 1 ]; then
+    printf '  [dry-run] %s\n' "$*"
+  else
+    "$@"
+  fi
+}
 
 # Back up a path preserving symlinks. Record whether it existed so the
 # restore script can remove files that Moriarty created.
 backup_path() {
   local src=$1 rel=${1#/}
+  [ "$DRY_RUN" -eq 1 ] && return 0
   if grep -qxF "modified $src" "$MANIFEST" 2>/dev/null ||
      grep -qxF "created $src" "$MANIFEST" 2>/dev/null; then
     return 0
@@ -90,15 +110,32 @@ backup_path() {
   fi
 }
 
+# Write a file atomically, after backing it up. Reads the new content
+# from stdin so callers can keep using heredocs.
+write_file() {
+  local dest=$1 tmp
+  if [ "$DRY_RUN" -eq 1 ]; then
+    printf '  [dry-run] would write %s\n' "$dest"
+    cat >/dev/null
+    return 0
+  fi
+  backup_path "$dest"
+  mkdir -p "$(dirname "$dest")" || fail "cannot create directory for $dest"
+  tmp="${dest}.moriarty.$$"
+  cat > "$tmp" || { rm -f "$tmp"; fail "cannot write $dest"; }
+  chmod 644 "$tmp"
+  mv -f "$tmp" "$dest" || { rm -f "$tmp"; fail "cannot install $dest"; }
+}
+
 bup() { backup_path "$1"; }
 echo -e "${B}== OPSEC MORIARTY ==${N}"
 echo -e "${B}[1/8] Dependencies${N}"
-pacman -S --needed --noconfirm dnscrypt-proxy bind || fail "dependency install failed (check network/mirrors)"
+run pacman -S --needed --noconfirm dnscrypt-proxy bind || fail "dependency install failed (check network/mirrors)"
 ok "dnscrypt-proxy + dig"
 bup /etc/sysctl.conf
 bup /etc/sysctl.d
 echo -e "${B}[2/8] Sysctl hardening${N}"
-cat > /etc/sysctl.d/99-hardening.conf << 'EOF'
+write_file /etc/sysctl.d/99-hardening.conf << 'EOF'
 kernel.kptr_restrict = 2
 kernel.dmesg_restrict = 1
 kernel.printk = 3 3 3 3
@@ -159,12 +196,20 @@ net.ipv6.conf.all.accept_redirects = 0
 net.ipv6.conf.default.accept_redirects = 0
 net.core.default_qdisc = fq
 EOF
-sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null | grep -qw bbr && echo "net.ipv4.tcp_congestion_control = bbr" >> /etc/sysctl.d/99-hardening.conf || true
-sysctl --system >/dev/null 2>&1 || true
+if [ "$DRY_RUN" -eq 1 ]; then
+  printf '  [dry-run] would enable BBR if available\n'
+elif sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null | grep -qw bbr; then
+  echo "net.ipv4.tcp_congestion_control = bbr" >> /etc/sysctl.d/99-hardening.conf
+fi
+if [ "$DRY_RUN" -eq 1 ]; then
+  printf '  [dry-run] sysctl --system\n'
+else
+  sysctl --system >/dev/null 2>&1 || true
+fi
 ok "sysctl applied"
 echo -e "${B}[3/8] Modprobe: obscure protocols and filesystems${N}"
 bup /etc/modprobe.d/blacklist-obscure.conf
-cat > /etc/modprobe.d/blacklist-obscure.conf << 'EOF'
+write_file /etc/modprobe.d/blacklist-obscure.conf << 'EOF'
 install dccp /bin/false
 install sctp /bin/false
 install rds /bin/false
@@ -195,15 +240,15 @@ install vivid /bin/false
 EOF
 ok "modprobe applied (full effect after reboot)"
 echo -e "${B}[4/8] MAC per boot (systemd.link)${N}"
-rm -f /etc/systemd/network/10-garbato-random-mac.link /etc/systemd/network/11-garbato-random-mac-wifi.link /etc/systemd/resolved.conf.d/garbato-dns.conf 2>/dev/null || true
-cat > /etc/systemd/network/10-moriarty-random-mac.link << 'EOF'
+run rm -f /etc/systemd/network/10-garbato-random-mac.link /etc/systemd/network/11-garbato-random-mac-wifi.link /etc/systemd/resolved.conf.d/garbato-dns.conf 2>/dev/null || true
+write_file /etc/systemd/network/10-moriarty-random-mac.link << 'EOF'
 [Match]
 OriginalName=en*
 [Link]
 MACAddressPolicy=random
 EOF
 # unconditional: harmless without Wi-Fi, future-proof if a card appears later
-cat > /etc/systemd/network/11-moriarty-random-mac-wifi.link << 'EOF'
+write_file /etc/systemd/network/11-moriarty-random-mac-wifi.link << 'EOF'
 [Match]
 OriginalName=wl*
 [Link]
@@ -212,9 +257,9 @@ EOF
 ok "systemd.link ready"
 echo -e "${B}[5/8] NetworkManager: MAC+IP per boot, no hostname, private IPv6${N}"
 command -v nmcli >/dev/null 2>&1 || fail "NetworkManager is required"
-mkdir -p /etc/NetworkManager/conf.d
+run mkdir -p /etc/NetworkManager/conf.d
 bup /etc/NetworkManager/conf.d/00-mac-ip-randomize.conf
-cat > /etc/NetworkManager/conf.d/00-mac-ip-randomize.conf << 'EOF'
+write_file /etc/NetworkManager/conf.d/00-mac-ip-randomize.conf << 'EOF'
 [device]
 wifi.scan-rand-mac-address=yes
 [connection]
@@ -232,15 +277,15 @@ ipv6.addr-gen-mode=stable-privacy
 ipv6.ip6-privacy=2
 EOF
 bup /etc/NetworkManager/conf.d/90-dns-none.conf
-printf '[main]\ndns=none\n' > /etc/NetworkManager/conf.d/90-dns-none.conf
-nmcli general reload 2>/dev/null || true
+printf '[main]\ndns=none\n' | write_file /etc/NetworkManager/conf.d/90-dns-none.conf
+run nmcli general reload 2>/dev/null || true
 nmcli -t -f NAME,TYPE connection show 2>/dev/null | grep -E ':802-3-ethernet$|:802-11-wireless$' | cut -d: -f1 | while IFS= read -r c; do
-  nmcli connection modify "$c" ipv4.ignore-auto-dns yes ipv6.ignore-auto-dns yes ipv4.dns "" ipv6.dns "" 2>/dev/null || true
+  run nmcli connection modify "$c" ipv4.ignore-auto-dns yes ipv6.ignore-auto-dns yes ipv4.dns "" ipv6.dns "" 2>/dev/null || true
 done
 ok "NetworkManager ready"
 echo -e "${B}[6/8] Swiss encrypted DNS (dnscrypt-proxy)${N}"
 bup /etc/dnscrypt-proxy/dnscrypt-proxy.toml
-cat > /etc/dnscrypt-proxy/dnscrypt-proxy.toml << 'EOF'
+write_file /etc/dnscrypt-proxy/dnscrypt-proxy.toml << 'EOF'
 listen_addresses = ['127.0.0.1:53']
 server_names = ['quad9-dnscrypt-ip4-filter-pri', 'quad9-dnscrypt-ip4-nofilter-pri', 'dns.digitale-gesellschaft.ch']
 require_dnssec = true
@@ -255,38 +300,41 @@ cache_file = '/var/cache/dnscrypt-proxy/public-resolvers.md'
 minisign_key = 'RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3'
 refresh_delay = 72
 EOF
-mkdir -p /var/cache/dnscrypt-proxy /var/log/dnscrypt-proxy
-chown dnscrypt:dnscrypt /var/cache/dnscrypt-proxy /var/log/dnscrypt-proxy 2>/dev/null || true
+run mkdir -p /var/cache/dnscrypt-proxy /var/log/dnscrypt-proxy
+run chown dnscrypt:dnscrypt /var/cache/dnscrypt-proxy /var/log/dnscrypt-proxy 2>/dev/null || true
 bup /etc/resolv.conf
-rm -f /etc/resolv.conf
-printf '# Generated by dnscrypt-proxy\nnameserver 127.0.0.1\noptions edns0\n' > /etc/resolv.conf
-systemctl enable --now dnscrypt-proxy.service >/dev/null 2>&1 || fail "dnscrypt failed to start"
+printf '# Generated by dnscrypt-proxy\nnameserver 127.0.0.1\noptions edns0\n' | write_file /etc/resolv.conf
+run systemctl enable --now dnscrypt-proxy.service >/dev/null 2>&1 || fail "dnscrypt failed to start"
 # first start may download the resolver list, so retry instead of a fixed wait
-DNS_OK=""
-for _ in 1 2 3 4 5; do
-  sleep 2
-  [ -n "$(dig example.com @127.0.0.1 +short 2>/dev/null)" ] && { DNS_OK=1; break; }
-done
-[ -n "$DNS_OK" ] && ok "DNS resolves" || fail "DNS broken - run: systemctl status dnscrypt-proxy"
+if [ "$DRY_RUN" -eq 1 ]; then
+  ok "dry-run: skipping DNS wait"
+else
+  DNS_OK=""
+  for _ in 1 2 3 4 5; do
+    sleep 2
+    [ -n "$(dig example.com @127.0.0.1 +short 2>/dev/null)" ] && { DNS_OK=1; break; }
+  done
+  [ -n "$DNS_OK" ] && ok "DNS resolves" || fail "DNS broken - run: systemctl status dnscrypt-proxy"
+fi
 echo -e "${B}[7/8] resolved dnscrypt-only + silent avahi + ufw${N}"
-mkdir -p /etc/systemd/resolved.conf.d
+run mkdir -p /etc/systemd/resolved.conf.d
 if [ -f /etc/systemd/resolved.conf.d/moriarty-dns.conf ]; then bup /etc/systemd/resolved.conf.d/moriarty-dns.conf; fi
-printf '[Resolve]\nDNS=127.0.0.1\nFallbackDNS=\nLLMNR=no\nMulticastDNS=no\nDNSSEC=no\n' > /etc/systemd/resolved.conf.d/moriarty-dns.conf
-systemctl restart systemd-resolved 2>/dev/null || true
+printf '[Resolve]\nDNS=127.0.0.1\nFallbackDNS=\nLLMNR=no\nMulticastDNS=no\nDNSSEC=no\n' | write_file /etc/systemd/resolved.conf.d/moriarty-dns.conf
+run systemctl restart systemd-resolved 2>/dev/null || true
 if [ -f /etc/avahi/avahi-daemon.conf ]; then
   bup /etc/avahi/avahi-daemon.conf
-  sed -i 's/^#*disable-publishing=.*/disable-publishing=yes/' /etc/avahi/avahi-daemon.conf || true
-  systemctl restart avahi-daemon 2>/dev/null || true
+  run sed -i 's/^#*disable-publishing=.*/disable-publishing=yes/' /etc/avahi/avahi-daemon.conf || true
+  run systemctl restart avahi-daemon 2>/dev/null || true
 else
   warn "avahi not installed - skipping"
 fi
 if [ -f /etc/ufw/sysctl.conf ]; then
   bup /etc/ufw/sysctl.conf
-  sed -i 's|^net/ipv4/conf/default/rp_filter=1|#net/ipv4/conf/default/rp_filter=1|;s|^net/ipv4/conf/all/rp_filter=1|#net/ipv4/conf/all/rp_filter=1|' /etc/ufw/sysctl.conf || true
+  run sed -i 's|^net/ipv4/conf/default/rp_filter=1|#net/ipv4/conf/default/rp_filter=1|;s|^net/ipv4/conf/all/rp_filter=1|#net/ipv4/conf/all/rp_filter=1|' /etc/ufw/sysctl.conf || true
 else
   warn "ufw not installed - no active firewall"
 fi
-sysctl -w net.ipv4.conf.all.rp_filter=2 >/dev/null 2>&1 || true
+run sysctl -w net.ipv4.conf.all.rp_filter=2 >/dev/null 2>&1 || true
 ok "resolved/avahi/ufw done"
 echo -e "${B}[8/8] Verification${N}"
 echo "  sysctl: kptr=$(sysctl -n kernel.kptr_restrict 2>/dev/null) dmesg=$(sysctl -n kernel.dmesg_restrict 2>/dev/null) ptrace=$(sysctl -n kernel.yama.ptrace_scope 2>/dev/null) rp=$(sysctl -n net.ipv4.conf.all.rp_filter 2>/dev/null) tempaddr=$(sysctl -n net.ipv6.conf.all.use_tempaddr 2>/dev/null)"
