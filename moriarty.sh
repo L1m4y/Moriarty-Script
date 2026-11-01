@@ -313,13 +313,19 @@ echo -e "${B}[5/7] Encrypted DNS (dnscrypt-proxy)${N}"
 bup /etc/dnscrypt-proxy/dnscrypt-proxy.toml
 write_file /etc/dnscrypt-proxy/dnscrypt-proxy.toml << 'EOF'
 listen_addresses = ['127.0.0.1:53']
-server_names = ['quad9-dnscrypt-ip4-filter-pri', 'quad9-dnscrypt-ip4-nofilter-pri', 'dns.digitale-gesellschaft.ch']
+server_names = ['quad9-dnscrypt-ip4-nofilter-pri', 'dns.digitale-gesellschaft.ch']
 require_dnssec = true
 require_nolog = true
-require_nofilter = false
+require_nofilter = true
 cache = true
 cache_size = 4096
 cache_min_ttl = 2400
+# The resolver list is fetched before dnscrypt can answer anything, so it
+# needs a bootstrap resolver. Point it at Quad9 instead of Google's
+# hardcoded default and forbid falling back to the system resolver, which
+# by then is dnscrypt itself.
+bootstrap_resolvers = ['9.9.9.9:53', '149.112.112.112:53']
+ignore_system_dns = true
 [sources.public-resolvers]
 urls = ['https://raw.githubusercontent.com/DNSCrypt/dnscrypt-resolvers/master/v3/public-resolvers.md', 'https://download.dnscrypt.info/resolvers-list/v3/public-resolvers.md']
 cache_file = '/var/cache/dnscrypt-proxy/public-resolvers.md'
