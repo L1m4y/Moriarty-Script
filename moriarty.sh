@@ -10,13 +10,64 @@
 set -e
 PROG="${0##*/}"
 VERSION="2.0.0"
-R='\033[0;31m'; G='\033[0;32m'; Y='\033[1;33m'; C='\033[0;36m'; B='\033[1m'; N='\033[0m'
+
+if [ -t 1 ]; then
+  R='\033[0;31m'; G='\033[0;32m'; Y='\033[1;33m'; B='\033[1m'; N='\033[0m'
+else
+  R=''; G=''; Y=''; B=''; N=''
+fi
+
 ok() { echo -e "  ${G}[OK]${N} $1"; }
 warn() { echo -e "  ${Y}[!]${N} $1"; }
 fail() { echo -e "  ${R}[FAIL]${N} $1"; exit 1; }
+
+usage() {
+  cat <<EOF
+$PROG $VERSION - OPSEC hardening for Arch Linux
+
+Usage: sudo ./$PROG [options]
+
+Options:
+  -h, --help       Show this help and exit
+  -V, --version    Show the version and exit
+  -y, --yes        Do not ask for confirmation
+      --no-color   Disable colored output
+EOF
+}
+
+ASSUME_YES=0
+USE_COLOR=1
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -h|--help) usage; exit 0 ;;
+    -V|--version) echo "$PROG $VERSION"; exit 0 ;;
+    -y|--yes) ASSUME_YES=1 ;;
+    --no-color) USE_COLOR=0 ;;
+    *) fail "unknown option: $1 (try --help)" ;;
+  esac
+  shift
+done
+
+if [ "$USE_COLOR" -eq 0 ]; then
+  R=''; G=''; Y=''; B=''; N=''
+fi
+
+[ "$EUID" -ne 0 ] && fail "run as root: sudo bash $0"
+
+if [ "$ASSUME_YES" -ne 1 ]; then
+  if [ ! -t 0 ]; then
+    fail "non-interactive shell: use --yes"
+  fi
+  echo -e "${Y}This will modify /etc and network settings.${N}"
+  read -r -p "Continue? [y/N] " reply
+  case "$reply" in
+    [yY]|[yY][eE][sS]) ;;
+    *) echo "Aborted."; exit 1 ;;
+  esac
+fi
+
 # snapshot a file/dir into the backup tree preserving its /etc path
 bup() { local p="${1#/}"; mkdir -p "$BK/$(dirname "$p")" 2>/dev/null || true; cp -aL "$1" "$BK/$p" 2>/dev/null || true; }
-[ "$EUID" -ne 0 ] && fail "sudo bash $0"
 TS=$(date +%Y%m%d_%H%M%S)
 BK="/root/opsec-backup.$TS"
 mkdir -p "$BK"
