@@ -290,12 +290,9 @@ command -v nmcli >/dev/null 2>&1 || fail "NetworkManager is required"
 run mkdir -p /etc/NetworkManager/conf.d
 bup /etc/NetworkManager/conf.d/00-mac-ip-randomize.conf
 write_file /etc/NetworkManager/conf.d/00-mac-ip-randomize.conf << 'EOF'
-[device]
-wifi.scan-rand-mac-address=yes
 [connection]
-# RFC 7844-inspired per-boot identity: stable within a boot,
-# new identity after every reboot (${BOOT} in the stable-id).
-# Refs: NM examples/nm-conf.d/30-anon.conf, Fedora Magazine MAC randomization guide
+# Identity is stable inside a boot and rotates on reboot: ${BOOT} changes
+# every boot and the MAC, DHCP client-id and DUID are derived from it.
 connection.stable-id=${CONNECTION}/${BOOT}
 ethernet.cloned-mac-address=stable
 wifi.cloned-mac-address=stable
@@ -304,7 +301,6 @@ ipv4.dhcp-send-hostname=false
 ipv6.dhcp-send-hostname=false
 ipv6.dhcp-duid=ll
 ipv6.addr-gen-mode=stable-privacy
-ipv6.ip6-privacy=2
 EOF
 bup /etc/NetworkManager/conf.d/90-dns-none.conf
 printf '[main]\ndns=none\n' | write_file /etc/NetworkManager/conf.d/90-dns-none.conf
