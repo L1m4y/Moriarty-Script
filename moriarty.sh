@@ -392,8 +392,35 @@ else
 fi
 ok "resolved/avahi/ufw done"
 echo -e "${B}[7/7] Verification${N}"
-echo "  sysctl: kptr=$(sysctl -n kernel.kptr_restrict 2>/dev/null) dmesg=$(sysctl -n kernel.dmesg_restrict 2>/dev/null) ptrace=$(sysctl -n kernel.yama.ptrace_scope 2>/dev/null) rp=$(sysctl -n net.ipv4.conf.all.rp_filter 2>/dev/null) tempaddr=$(sysctl -n net.ipv6.conf.all.use_tempaddr 2>/dev/null)"
-echo "  dns: $(grep nameserver /etc/resolv.conf | head -1) | dnscrypt: $(systemctl is-active dnscrypt-proxy 2>/dev/null)"
-resolvectl status 2>/dev/null | grep -E "192.168.1.1|8.8.8.8|1.1.1.1" && warn "foreign DNS remains" || ok "no foreign DNS"
+if [ "$DRY_RUN" -eq 1 ]; then
+  ok "dry-run: nothing to verify"
+else
+  echo "  sysctl: kptr=$(sysctl -n kernel.kptr_restrict 2>/dev/null) dmesg=$(sysctl -n kernel.dmesg_restrict 2>/dev/null) ptrace=$(sysctl -n kernel.yama.ptrace_scope 2>/dev/null) tempaddr=$(sysctl -n net.ipv6.conf.all.use_tempaddr 2>/dev/null)"
+  systemctl is-active --quiet dnscrypt-proxy && ok "dnscrypt-proxy active" \
+    || warn "dnscrypt-proxy is not active"
+
+  # Query the way applications do: through /etc/resolv.conf, not by
+  # pointing dig straight at 127.0.0.1, which bypasses resolved and NM.
+  if [ -n "$(dig +short +time=3 +tries=1 example.com 2>/dev/null)" ]; then
+    ok "system resolver answers"
+  else
+    warn "system resolver does not answer"
+  fi
+
+  # Any DNS server left in resolvectl that is not the local proxy is an
+  # upstream resolver the queries can leak to. Parse the field instead of
+  # matching a hardcoded list of addresses.
+  FOREIGN=""
+  if command -v resolvectl >/dev/null 2>&1; then
+    FOREIGN=$(resolvectl status 2>/dev/null \
+      | sed -n 's/.*DNS Servers: //p; s/.*Current DNS Server: //p' \
+      | tr ' ' '\n' | grep -vE '^(127\.0\.0\.1|::1|)$' || true)
+  fi
+  if [ -n "$FOREIGN" ]; then
+    warn "upstream resolvers still configured: $(echo "$FOREIGN" | tr '\n' ' ')"
+  else
+    ok "no upstream resolver configured"
+  fi
+fi
 echo ""
-echo -e "${B}COMPLETE - backup at $BK - reboot for new MAC/IP${N}"
+echo -e "${B}COMPLETE - backup at $BK - reboot to activate the new identity${N}"
