@@ -6,13 +6,13 @@
 
 <h1>Moriarty</h1>
 
-**One-shot OPSEC hardening for Arch Linux.**
+**One-shot PRIVACY hardening for Arch Linux.**
 
 A single-command configuration profile: per-boot hardware identity, encrypted DNS and a tightened kernel.
 
-[![OS](https://img.shields.io/badge/OS-Arch_Linux-1793D1?logo=archlinux&logoColor=E7E7DB)](https://archlinux.org)
-[![Shell](https://img.shields.io/badge/Shell-Bash-4EAA25?logo=gnubash&logoColor=FFFFFF)](https://www.gnu.org/software/bash/)
-[![License](https://img.shields.io/badge/License-GPL_3.0-3DA639?logo=open-source-initiative&logoColor=FFFFFF)](LICENSE)
+[![OS](https://img.shields.io/badge/OS-Arch_Linux-D42F3F?logo=archlinux&logoColor=E7E7DB)](https://archlinux.org)
+[![Shell](https://img.shields.io/badge/Shell-Bash-FF9700?logo=gnubash&logoColor=FFFFFF)](https://www.gnu.org/software/bash/)
+[![License](https://img.shields.io/badge/License-GPL_3.0-D42F3F?logo=open-source-initiative&logoColor=FFFFFF)](LICENSE)
 
 </div>
 
@@ -108,3 +108,6 @@ sudo ./moriarty-restore.sh /root/opsec-backup.<timestamp>
 > [!WARNING]
 > The script replaces system-wide DNS and network configuration. Review before running on managed systems, containers, VMs, static-IP deployments, or machines using 802.1X or captive portals. Encrypted DNS hides the resolver from the network, not the destination: the TCP connections and, in most cases, the HTTPS SNI remain visible. This is not an anonymity tool.
 
+<div align="center">
+<i>“He is the organiser of half that is evil and nearly all that is undetected.”</i>
+</div>
