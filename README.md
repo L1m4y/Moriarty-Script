@@ -108,20 +108,6 @@ sudo ./moriarty-restore.sh /root/opsec-backup.<timestamp>
 > [!WARNING]
 > The script replaces system-wide DNS and network configuration. Review before running on managed systems, containers, VMs, static-IP deployments, or machines using 802.1X or captive portals. Encrypted DNS hides the resolver from the network, not the destination: the TCP connections and, in most cases, the HTTPS SNI remain visible. This is not an anonymity tool.
 
-### Limitations
-
-- Encrypted DNS protects the resolver, not the destination of the connection. Traffic destinations and DNS names in TLS SNI are still visible to the network unless a VPN or Tor is used.
-- `install ... /bin/false` prevents automatic loading only. Modules already loaded, compiled into the kernel, or loaded with `insmod`, are not affected.
-- A change in MAC or DHCP identity already took effect at connection activation; a reboot is needed only for new connections.
-- On kernels where `kernel.yama.ptrace_scope` was already `1`, that line adds no further control.
-- `systemd` already applies several of the listed sysctl values; they are kept explicit so their state is visible when reading the file offline.
-
-## Tested on
-
-- `moriarty.sh` version 2.0.0
-- Arch Linux compatible system, kernel 7.3 series, NetworkManager 1.58, dnscrypt-proxy 2.1.20
-- Shellcheck (0.11.0) reports no warnings with `shellcheck -S warning` on both scripts; the same is run in CI
-
 ## License
 
 Distributed under the [GPL-3.0](LICENSE) license.
