@@ -1,5 +1,15 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Moriarty - OPSEC hardening for Arch Linux
+# https://github.com/L1m4y/Moriarty-Script
+#
+# Usage: sudo bash Moriarty-Script.sh
+# Requirements: Arch Linux (or derivative), systemd, NetworkManager, pacman
+#
 set -e
+PROG="${0##*/}"
+VERSION="2.0.0"
 R='\033[0;31m'; G='\033[0;32m'; Y='\033[1;33m'; C='\033[0;36m'; B='\033[1m'; N='\033[0m'
 ok() { echo -e "  ${G}[OK]${N} $1"; }
 warn() { echo -e "  ${Y}[!]${N} $1"; }
