@@ -179,12 +179,12 @@ ufw_sysctl() {
 }
 
 echo -e "${B}== OPSEC MORIARTY ==${N}"
-echo -e "${B}[1/8] Dependencies${N}"
+echo -e "${B}[1/7] Dependencies${N}"
 run pacman -S --needed --noconfirm dnscrypt-proxy bind || fail "dependency install failed (check network/mirrors)"
 ok "dnscrypt-proxy + dig"
 bup /etc/sysctl.conf
 bup /etc/sysctl.d
-echo -e "${B}[2/8] Sysctl hardening${N}"
+echo -e "${B}[2/7] Sysctl hardening${N}"
 # Only values that the kernel does not already ship as defaults and that
 # systemd's 50-default.conf does not apply (rp_filter, accept_source_route,
 # protected_{hardlinks,symlinks}). Throughput knobs live in 99-performance.conf.
@@ -247,7 +247,7 @@ else
   sysctl --system >/dev/null 2>&1 || true
 fi
 ok "sysctl applied"
-echo -e "${B}[3/8] Modprobe: obscure protocols and filesystems${N}"
+echo -e "${B}[3/7] Modprobe: obscure protocols and filesystems${N}"
 bup /etc/modprobe.d/blacklist-obscure.conf
 write_file /etc/modprobe.d/blacklist-obscure.conf << 'EOF'
 install dccp /bin/false
@@ -279,23 +279,13 @@ install udf /bin/false
 install vivid /bin/false
 EOF
 ok "modprobe applied (full effect after reboot)"
-echo -e "${B}[4/8] MAC per boot (systemd.link)${N}"
-run rm -f /etc/systemd/network/10-garbato-random-mac.link /etc/systemd/network/11-garbato-random-mac-wifi.link /etc/systemd/resolved.conf.d/garbato-dns.conf 2>/dev/null || true
-write_file /etc/systemd/network/10-moriarty-random-mac.link << 'EOF'
-[Match]
-OriginalName=en*
-[Link]
-MACAddressPolicy=random
-EOF
-# unconditional: harmless without Wi-Fi, future-proof if a card appears later
-write_file /etc/systemd/network/11-moriarty-random-mac-wifi.link << 'EOF'
-[Match]
-OriginalName=wl*
-[Link]
-MACAddressPolicy=random
-EOF
-ok "systemd.link ready"
-echo -e "${B}[5/8] NetworkManager: MAC+IP per boot, no hostname, private IPv6${N}"
+echo -e "${B}[4/7] NetworkManager: identity per boot${N}"
+# NetworkManager already randomizes MACs at activation. Writing systemd.link
+# rules on top of it duplicated the job and made the effective policy depend
+# on which layer won, so only the NM profile remains. Remove the .link files
+# written by Moriarty 1.x if they are still around.
+run rm -f /etc/systemd/network/10-moriarty-random-mac.link \
+          /etc/systemd/network/11-moriarty-random-mac-wifi.link
 command -v nmcli >/dev/null 2>&1 || fail "NetworkManager is required"
 run mkdir -p /etc/NetworkManager/conf.d
 bup /etc/NetworkManager/conf.d/00-mac-ip-randomize.conf
@@ -323,7 +313,7 @@ nmcli -t -f NAME,TYPE connection show 2>/dev/null | grep -E ':802-3-ethernet$|:8
   run nmcli connection modify "$c" ipv4.ignore-auto-dns yes ipv6.ignore-auto-dns yes ipv4.dns "" ipv6.dns "" 2>/dev/null || true
 done
 ok "NetworkManager ready"
-echo -e "${B}[6/8] Swiss encrypted DNS (dnscrypt-proxy)${N}"
+echo -e "${B}[5/7] Encrypted DNS (dnscrypt-proxy)${N}"
 bup /etc/dnscrypt-proxy/dnscrypt-proxy.toml
 write_file /etc/dnscrypt-proxy/dnscrypt-proxy.toml << 'EOF'
 listen_addresses = ['127.0.0.1:53']
@@ -371,7 +361,7 @@ else
   done
   [ -n "$DNS_OK" ] && ok "DNS resolves" || fail "DNS broken - run: systemctl status dnscrypt-proxy"
 fi
-echo -e "${B}[7/8] resolved dnscrypt-only + silent avahi + ufw${N}"
+echo -e "${B}[6/7] resolved dnscrypt-only + silent avahi + ufw${N}"
 run mkdir -p /etc/systemd/resolved.conf.d
 if [ -f /etc/systemd/resolved.conf.d/moriarty-dns.conf ]; then bup /etc/systemd/resolved.conf.d/moriarty-dns.conf; fi
 printf '[Resolve]\nDNS=127.0.0.1\nFallbackDNS=\nLLMNR=no\nMulticastDNS=no\nDNSSEC=no\n' | write_file /etc/systemd/resolved.conf.d/moriarty-dns.conf
@@ -399,7 +389,7 @@ else
   warn "ufw not installed - no active firewall"
 fi
 ok "resolved/avahi/ufw done"
-echo -e "${B}[8/8] Verification${N}"
+echo -e "${B}[7/7] Verification${N}"
 echo "  sysctl: kptr=$(sysctl -n kernel.kptr_restrict 2>/dev/null) dmesg=$(sysctl -n kernel.dmesg_restrict 2>/dev/null) ptrace=$(sysctl -n kernel.yama.ptrace_scope 2>/dev/null) rp=$(sysctl -n net.ipv4.conf.all.rp_filter 2>/dev/null) tempaddr=$(sysctl -n net.ipv6.conf.all.use_tempaddr 2>/dev/null)"
 echo "  dns: $(grep nameserver /etc/resolv.conf | head -1) | dnscrypt: $(systemctl is-active dnscrypt-proxy 2>/dev/null)"
 resolvectl status 2>/dev/null | grep -E "192.168.1.1|8.8.8.8|1.1.1.1" && warn "foreign DNS remains" || ok "no foreign DNS"
