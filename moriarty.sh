@@ -66,11 +66,31 @@ if [ "$ASSUME_YES" -ne 1 ]; then
   esac
 fi
 
-# snapshot a file/dir into the backup tree preserving its /etc path
-bup() { local p="${1#/}"; mkdir -p "$BK/$(dirname "$p")" 2>/dev/null || true; cp -aL "$1" "$BK/$p" 2>/dev/null || true; }
 TS=$(date +%Y%m%d_%H%M%S)
 BK="/root/opsec-backup.$TS"
-mkdir -p "$BK"
+MANIFEST="$BK/MANIFEST"
+mkdir -p "$BK" || fail "cannot create backup directory $BK"
+chmod 700 "$BK"
+: > "$MANIFEST" || fail "cannot write $MANIFEST"
+
+# Back up a path preserving symlinks. Record whether it existed so the
+# restore script can remove files that Moriarty created.
+backup_path() {
+  local src=$1 rel=${1#/}
+  if grep -qxF "modified $src" "$MANIFEST" 2>/dev/null ||
+     grep -qxF "created $src" "$MANIFEST" 2>/dev/null; then
+    return 0
+  fi
+  if [ -e "$src" ] || [ -L "$src" ]; then
+    mkdir -p "$BK/$(dirname "$rel")" || fail "cannot create backup directory for $src"
+    cp -a "$src" "$BK/$rel" || fail "cannot back up $src"
+    printf 'modified %s\n' "$src" >> "$MANIFEST"
+  else
+    printf 'created %s\n' "$src" >> "$MANIFEST"
+  fi
+}
+
+bup() { backup_path "$1"; }
 echo -e "${B}== OPSEC MORIARTY ==${N}"
 echo -e "${B}[1/8] Dependencies${N}"
 pacman -S --needed --noconfirm dnscrypt-proxy bind || fail "dependency install failed (check network/mirrors)"
