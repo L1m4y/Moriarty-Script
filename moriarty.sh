@@ -90,8 +90,10 @@ on_exit() {
     if [ "$FAILED" -eq 0 ]; then
       echo -e "  ${R}[FAIL]${N} Moriarty stopped with exit $rc" >&2
     fi
+    rollback_dns
+    echo "  DNS resolver files restored" >&2
     echo "  Backup: ${BK:-none}" >&2
-    echo "  Restore: sudo ./moriarty-restore.sh ${BK:-<backup-dir>}" >&2
+    echo "  Full restore: sudo ./moriarty-restore.sh ${BK:-<backup-dir>}" >&2
   fi
 }
 trap on_exit EXIT
@@ -141,6 +143,30 @@ write_file() {
 }
 
 bup() { backup_path "$1"; }
+
+# Put a single path back from the backup tree, or remove it if Moriarty
+# created it. Used by the failure rollback below.
+restore_path() {
+  local src=$1 rel=${1#/}
+  if grep -qxF "modified $src" "$MANIFEST" 2>/dev/null; then
+    cp -a "$BK/$rel" "$src" 2>/dev/null || return 1
+  elif grep -qxF "created $src" "$MANIFEST" 2>/dev/null; then
+    rm -f "$src" 2>/dev/null || return 1
+  fi
+}
+
+# If the script dies after resolv.conf and NetworkManager have been
+# repointed at a dnscrypt instance that never came up, the machine is left
+# without DNS. Undo the two files that cause that, nothing else.
+rollback_dns() {
+  [ -n "${BK:-}" ] && [ -d "$BK" ] || return 0
+  restore_path /etc/resolv.conf
+  restore_path /etc/NetworkManager/conf.d/90-dns-none.conf
+  systemctl --quiet restart NetworkManager >/dev/null 2>&1 || true
+  if command -v resolvectl >/dev/null 2>&1; then
+    systemctl --quiet restart systemd-resolved >/dev/null 2>&1 || true
+  fi
+}
 
 # Rewrite a key in ufw's sysctl file, appending it when absent.
 ufw_sysctl() {
