@@ -18,7 +18,7 @@ Turn your machine into a moving target — randomized hardware identity, encrypt
 
 ## What it does
 
-`Moriarty-Script.sh` runs 8 sequential phases:
+`moriarty.sh` runs 8 sequential phases:
 
 | # | Phase | Description |
 |:-:|-------|-------------|
@@ -44,7 +44,7 @@ vm.mmap_rnd_bits = 32             vm.unprivileged_userfaultfd = 0
 net.ipv4.conf.all.rp_filter = 2   net.ipv6.conf.all.use_tempaddr = 2
 net.ipv4.tcp_syncookies = 1       net.ipv4.tcp_rfc1337 = 1
 ```
-*(full list in `Moriarty-Script.sh`)*
+*(full list in `moriarty.sh`)*
 
 </details>
 
@@ -66,7 +66,7 @@ Requires DNSSEC and no-logging — servers failing either check are rejected.
 ```bash
 git clone https://github.com/L1m4y/Moriarty-Script.git
 cd Moriarty-Script
-sudo bash Moriarty-Script.sh
+sudo bash moriarty.sh
 ```
 
 > [!IMPORTANT]

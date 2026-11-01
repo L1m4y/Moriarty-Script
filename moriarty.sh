@@ -4,7 +4,7 @@
 # Moriarty - OPSEC hardening for Arch Linux
 # https://github.com/L1m4y/Moriarty-Script
 #
-# Usage: sudo bash Moriarty-Script.sh
+# Usage: sudo bash moriarty.sh
 # Requirements: Arch Linux (or derivative), systemd, NetworkManager, pacman
 #
 set -e
