@@ -49,7 +49,14 @@ while [ $# -gt 0 ]; do
 done
 
 if [ -z "$BK" ]; then
-  BK=$(ls -dt /root/opsec-backup.* 2>/dev/null | head -n 1 || true)
+  BK=""
+  for cand in /root/opsec-backup.*; do
+    [ -d "$cand" ] || continue
+    case "$cand" in *.DRYRUN) continue ;; esac
+    if [ -z "$BK" ] || [ "$cand" -nt "$BK" ]; then
+      BK=$cand
+    fi
+  done
 fi
 if [ -z "$BK" ] || [ ! -d "$BK" ]; then
   log "no backup directory found under /root" >&2
