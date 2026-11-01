@@ -148,15 +148,15 @@ ok "dnscrypt-proxy + dig"
 bup /etc/sysctl.conf
 bup /etc/sysctl.d
 echo -e "${B}[2/8] Sysctl hardening${N}"
+# Only values that the kernel does not already ship as defaults and that
+# systemd's 50-default.conf does not apply (rp_filter, accept_source_route,
+# protected_{hardlinks,symlinks}). Throughput knobs live in 99-performance.conf.
 write_file /etc/sysctl.d/99-hardening.conf << 'EOF'
 kernel.kptr_restrict = 2
 kernel.dmesg_restrict = 1
 kernel.printk = 3 3 3 3
-kernel.randomize_va_space = 2
 vm.mmap_rnd_bits = 32
 vm.mmap_rnd_compat_bits = 16
-kernel.perf_event_paranoid = 2
-kernel.yama.ptrace_scope = 1
 kernel.unprivileged_bpf_disabled = 1
 net.core.bpf_jit_harden = 2
 kernel.kexec_load_disabled = 1
@@ -170,22 +170,14 @@ dev.tty.legacy_tiocsti = 0
 # driver would turn into a reboot loop.
 kernel.oops_limit = 1
 kernel.panic = 30
-fs.suid_dumpable = 0
 fs.protected_fifos = 2
 fs.protected_regular = 2
-fs.protected_symlinks = 1
-fs.protected_hardlinks = 1
-net.ipv4.ip_forward = 0
-net.ipv4.conf.all.rp_filter = 2
-net.ipv4.conf.default.rp_filter = 2
 net.ipv4.conf.all.accept_redirects = 0
 net.ipv4.conf.default.accept_redirects = 0
 net.ipv4.conf.all.secure_redirects = 0
 net.ipv4.conf.default.secure_redirects = 0
 net.ipv4.conf.all.send_redirects = 0
 net.ipv4.conf.default.send_redirects = 0
-net.ipv4.conf.all.accept_source_route = 0
-net.ipv4.conf.default.accept_source_route = 0
 net.ipv6.conf.all.accept_source_route = 0
 net.ipv6.conf.default.accept_source_route = 0
 net.ipv4.conf.all.log_martians = 1
@@ -194,27 +186,23 @@ net.ipv4.conf.all.arp_filter = 1
 net.ipv4.conf.default.arp_filter = 1
 net.ipv4.conf.all.arp_ignore = 1
 net.ipv4.conf.all.arp_announce = 2
-net.ipv4.conf.all.arp_accept = 0
-net.ipv4.conf.default.arp_accept = 0
-net.ipv4.icmp_echo_ignore_broadcasts = 1
-net.ipv4.icmp_ignore_bogus_error_responses = 1
-net.ipv4.tcp_syncookies = 1
-net.ipv4.tcp_max_syn_backlog = 8192
 net.ipv4.tcp_synack_retries = 2
 net.ipv4.tcp_rfc1337 = 1
-net.ipv4.tcp_tw_reuse = 1
-net.ipv4.tcp_slow_start_after_idle = 0
-net.ipv4.tcp_fastopen = 3
 net.ipv6.conf.all.use_tempaddr = 2
 net.ipv6.conf.default.use_tempaddr = 2
 net.ipv6.conf.all.accept_redirects = 0
 net.ipv6.conf.default.accept_redirects = 0
+EOF
+write_file /etc/sysctl.d/99-performance.conf << 'EOF'
+# Throughput tuning, not hardening. Remove this file if you do not want it.
 net.core.default_qdisc = fq
+net.ipv4.tcp_max_syn_backlog = 8192
+net.ipv4.tcp_slow_start_after_idle = 0
 EOF
 if [ "$DRY_RUN" -eq 1 ]; then
   printf '  [dry-run] would enable BBR if available\n'
 elif sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null | grep -qw bbr; then
-  echo "net.ipv4.tcp_congestion_control = bbr" >> /etc/sysctl.d/99-hardening.conf
+  echo "net.ipv4.tcp_congestion_control = bbr" >> /etc/sysctl.d/99-performance.conf
 fi
 if [ "$DRY_RUN" -eq 1 ]; then
   printf '  [dry-run] sysctl --system\n'
