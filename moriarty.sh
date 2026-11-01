@@ -141,6 +141,17 @@ write_file() {
 }
 
 bup() { backup_path "$1"; }
+
+# Rewrite a key in ufw's sysctl file, appending it when absent.
+ufw_sysctl() {
+  local key=$1 val=$2 file=/etc/ufw/sysctl.conf
+  if grep -qE "^#?${key}=" "$file"; then
+    sed -i -E "s|^#?${key}=.*|${key}=${val}|" "$file"
+  else
+    printf '%s=%s\n' "$key" "$val" >> "$file"
+  fi
+}
+
 echo -e "${B}== OPSEC MORIARTY ==${N}"
 echo -e "${B}[1/8] Dependencies${N}"
 run pacman -S --needed --noconfirm dnscrypt-proxy bind || fail "dependency install failed (check network/mirrors)"
@@ -333,11 +344,19 @@ else
 fi
 if [ -f /etc/ufw/sysctl.conf ]; then
   bup /etc/ufw/sysctl.conf
-  run sed -i 's|^net/ipv4/conf/default/rp_filter=1|#net/ipv4/conf/default/rp_filter=1|;s|^net/ipv4/conf/all/rp_filter=1|#net/ipv4/conf/all/rp_filter=1|' /etc/ufw/sysctl.conf || true
+  # ufw loads this file after /etc/sysctl.d, so the values we care about
+  # have to be mirrored here or ufw silently wins.
+  if [ "$DRY_RUN" -eq 1 ]; then
+    printf '  [dry-run] would align /etc/ufw/sysctl.conf with 99-hardening.conf\n'
+  else
+    ufw_sysctl net/ipv4/conf/all/rp_filter 2
+    ufw_sysctl net/ipv4/conf/default/rp_filter 2
+    ufw_sysctl net/ipv4/conf/all/log_martians 1
+    ufw_sysctl net/ipv4/conf/default/log_martians 1
+  fi
 else
   warn "ufw not installed - no active firewall"
 fi
-run sysctl -w net.ipv4.conf.all.rp_filter=2 >/dev/null 2>&1 || true
 ok "resolved/avahi/ufw done"
 echo -e "${B}[8/8] Verification${N}"
 echo "  sysctl: kptr=$(sysctl -n kernel.kptr_restrict 2>/dev/null) dmesg=$(sysctl -n kernel.dmesg_restrict 2>/dev/null) ptrace=$(sysctl -n kernel.yama.ptrace_scope 2>/dev/null) rp=$(sysctl -n net.ipv4.conf.all.rp_filter 2>/dev/null) tempaddr=$(sysctl -n net.ipv6.conf.all.use_tempaddr 2>/dev/null)"
