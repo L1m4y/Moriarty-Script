@@ -108,7 +108,3 @@ sudo ./moriarty-restore.sh /root/opsec-backup.<timestamp>
 > [!WARNING]
 > The script replaces system-wide DNS and network configuration. Review before running on managed systems, containers, VMs, static-IP deployments, or machines using 802.1X or captive portals. Encrypted DNS hides the resolver from the network, not the destination: the TCP connections and, in most cases, the HTTPS SNI remain visible. This is not an anonymity tool.
 
-## License
-
-Distributed under the [GPL-3.0](LICENSE) license.
-
