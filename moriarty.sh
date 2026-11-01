@@ -165,9 +165,11 @@ dev.tty.ldisc_autoload = 0
 vm.unprivileged_userfaultfd = 0
 kernel.io_uring_disabled = 1
 dev.tty.legacy_tiocsti = 0
-kernel.panic = 1
+# Reboot 30s after a kernel oops so the backtrace reaches the journal.
+# Do not set warn_limit=1: it is panic_on_warn and a benign WARN in a
+# driver would turn into a reboot loop.
 kernel.oops_limit = 1
-kernel.warn_limit = 1
+kernel.panic = 30
 fs.suid_dumpable = 0
 fs.protected_fifos = 2
 fs.protected_regular = 2
