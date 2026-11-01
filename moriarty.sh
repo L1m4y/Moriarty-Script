@@ -18,8 +18,9 @@ else
 fi
 
 ok() { echo -e "  ${G}[OK]${N} $1"; }
-warn() { echo -e "  ${Y}[!]${N} $1"; }
-fail() { echo -e "  ${R}[FAIL]${N} $1"; exit 1; }
+warn() { echo -e "  ${Y}[!]${N} $1" >&2; }
+FAILED=0
+fail() { FAILED=1; echo -e "  ${R}[FAIL]${N} $1" >&2; exit 1; }
 
 usage() {
   cat <<EOF
@@ -82,6 +83,18 @@ else
   chmod 700 "$BK"
   : > "$MANIFEST" || fail "cannot write $MANIFEST"
 fi
+
+on_exit() {
+  local rc=$?
+  if [ "$rc" -ne 0 ] && [ "$DRY_RUN" -eq 0 ]; then
+    if [ "$FAILED" -eq 0 ]; then
+      echo -e "  ${R}[FAIL]${N} Moriarty stopped with exit $rc" >&2
+    fi
+    echo "  Backup: ${BK:-none}" >&2
+    echo "  Restore: sudo ./moriarty-restore.sh ${BK:-<backup-dir>}" >&2
+  fi
+}
+trap on_exit EXIT
 
 # Run a state-changing command, or print it in dry-run mode.
 run() {
