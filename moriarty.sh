@@ -160,8 +160,8 @@ restore_path() {
 # without DNS. Undo the two files that cause that, nothing else.
 rollback_dns() {
   [ -n "${BK:-}" ] && [ -d "$BK" ] || return 0
-  restore_path /etc/resolv.conf
-  restore_path /etc/NetworkManager/conf.d/90-dns-none.conf
+  restore_path /etc/resolv.conf || true
+  restore_path /etc/NetworkManager/conf.d/90-dns-none.conf || true
   systemctl --quiet restart NetworkManager >/dev/null 2>&1 || true
   if command -v resolvectl >/dev/null 2>&1; then
     systemctl --quiet restart systemd-resolved >/dev/null 2>&1 || true
@@ -183,9 +183,10 @@ echo -e "${B}[1/7] Dependencies${N}"
 run pacman -S --needed --noconfirm dnscrypt-proxy bind || fail "dependency install failed (check network/mirrors)"
 ok "dnscrypt-proxy + dig"
 echo -e "${B}[2/7] Sysctl hardening${N}"
-# Only values that the kernel does not already ship as defaults and that
-# systemd's 50-default.conf does not apply (rp_filter, accept_source_route,
-# protected_{hardlinks,symlinks}). Throughput knobs live in 99-performance.conf.
+# Values that are already kernel defaults or that systemd's 50-default.conf
+# applies reliably (rp_filter, accept_source_route, protected_{hardlinks,symlinks})
+# are left out. The rest are kept explicit so the profile can be read offline.
+# Throughput knobs live in 99-performance.conf.
 write_file /etc/sysctl.d/99-hardening.conf << 'EOF'
 kernel.kptr_restrict = 2
 kernel.dmesg_restrict = 1
