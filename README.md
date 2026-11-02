@@ -23,7 +23,7 @@ A single-command configuration profile: per-boot hardware identity, encrypted DN
 | # | Phase | Description |
 |:-:|-------|-------------|
 | 1 | **Dependencies** | Installs `dnscrypt-proxy` and `bind` (for `dig`) via pacman |
-| 2 | **Sysctl hardening** | 38 kernel/network tunables: hides kernel pointers and dmesg, ASLR, ptrace/BPF/io_uring limits, ICMP and redirect controls, disabled SysRq, core dumps. Values already provided by the kernel or `systemd` (like `rp_filter=2` and `protected_{hardlinks,symlinks}`) are not repeated |
+| 2 | **Sysctl hardening** | 37 kernel/network tunables: hides kernel pointers and dmesg, ASLR, BPF and io_uring limits, redirect and martian controls, disabled SysRq, core dumps. Values already provided by the kernel or `systemd` (like `rp_filter=2` and `protected_{hardlinks,symlinks}`) are not repeated |
 | 3 | **Module blacklist** | Disables 27 obscure protocols and filesystems (`dccp`, `sctp`, `x25`, `atm`, `hfs`, `cramfs`, `squashfs`...) through `install ... /bin/false`. Built-in modules and manual `insmod` are not covered; `squashfs` is included, so Live ISO / install media will not mount unless the module is available |
 | 4 | **Identity per boot** | NetworkManager derives MAC, DHCP client-id, DHCPv6 DUID and IPv6 interface-ID from one per-boot `stable-id`: identity is stable while a boot lasts and rotates after every reboot. No hostname is sent over DHCP and IPv6 privacy extensions are enabled |
 | 5 | **Encrypted DNS** | `dnscrypt-proxy` on `127.0.0.1:53`, DNSSEC- and no-log-required, DNS-filtering disabled. NM's own DNS is switched off so queries cannot leak through it |
@@ -56,7 +56,7 @@ Full list in `moriarty.sh`.
 |----------|----------|-------|
 | `quad9-dnscrypt-ip4-nofilter-pri` | Quad9 | DNSSEC, no filtering, no-logging |
 | `dns.digitale-gesellschaft.ch` | Digital Society (CH) | DNSSEC, no-logging |
-| bootstrap: `9.9.9.9` | Quad9 | plaintext, only to fetch the resolver list |
+| bootstrap: `9.9.9.9`, `149.112.112.112` | Quad9 | plaintext, only to fetch the resolver list |
 
 Requires DNSSEC and no logging; servers failing either check are rejected. The bootstrap query is sent in clear text because the resolver list has to be fetched before dnscrypt can answer.
 
@@ -71,7 +71,7 @@ sudo bash moriarty.sh            # apply
 sudo bash moriarty.sh --dry-run # show what would change first
 ```
 
-Undo any apply:
+Restore the files changed by an apply:
 
 ```bash
 sudo ./moriarty-restore.sh /root/opsec-backup.<timestamp>

@@ -16,7 +16,7 @@ behavior that could leave a machine without DNS.
 
 - MAC/DHCP/IPv6 identity is handled once, by NetworkManager. The duplicated
   `systemd.link` phase and its `.link` files were removed.
-- dnscrypt bootstrap uses Quad9 (`9.9.9.9`) and forbids system DNS fallback.
+- dnscrypt bootstrap uses Quad9 (`9.9.9.9`, `149.112.112.112`) and forbids system DNS fallback.
 - `warn_limit` removed from the sysctl profile; kernel panics now wait 30s.
 - `ufw/sysctl.conf` is aligned with the profile instead of being overridden by it.
 - Verification queries `/etc/resolv.conf` for real and reports every upstream
@@ -24,7 +24,7 @@ behavior that could leave a machine without DNS.
 - Failures restore `resolv.conf` and the NetworkManager DNS file instead of
   leaving the machine resolver-less.
 - Backups preserve symlinks and abort on error.
-- README states measured counts, the actual GPL-3.0 license, and known limits.
+- README states measured counts and the actual GPL-3.0 license.
 
 ### Removed
 
