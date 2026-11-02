@@ -74,7 +74,7 @@ sudo bash moriarty.sh --dry-run # show what would change first
 Restore the files changed by an apply:
 
 ```bash
-sudo ./moriarty-restore.sh /root/opsec-backup.<timestamp>
+sudo ./moriarty-restore.sh /root/moriarty-backup.<timestamp>
 ```
 
 > [!IMPORTANT]
@@ -98,7 +98,7 @@ sudo ./moriarty-restore.sh /root/opsec-backup.<timestamp>
 
 ## Behavior & safety
 
-- Every file overwritten is backed up first to `/root/opsec-backup.<timestamp>/`, preserving its path inside `/etc`; the manifest drives `moriarty-restore.sh`.
+- Every file overwritten is backed up first to `/root/moriarty-backup.<timestamp>/`, preserving its path inside `/etc`; the manifest drives `moriarty-restore.sh`.
 - If a phase fails after `/etc/resolv.conf` and the NetworkManager DNS file have been repointed at dnscrypt, both are restored before exit, so a failed run does not leave the machine without a working resolver.
 - dnscrypt configuration is validated with `dnscrypt-proxy --check` before the service is enabled; a broken config aborts instead of starting a dead proxy.
 - Verification queries the real system path (`/etc/resolv.conf`) and reports `systemd-resolved` upstreams different from `127.0.0.1` or `::1`, instead of scanning a hard-coded list of addresses.

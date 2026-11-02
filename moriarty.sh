@@ -74,10 +74,10 @@ fi
 
 TS=$(date +%Y%m%d_%H%M%S)
 if [ "$DRY_RUN" -eq 1 ]; then
-  BK="/root/opsec-backup.DRYRUN"
+  BK="/root/moriarty-backup.DRYRUN"
   MANIFEST=/dev/null
 else
-  BK="/root/opsec-backup.$TS"
+  BK="/root/moriarty-backup.$TS"
   MANIFEST="$BK/MANIFEST"
   mkdir -p "$BK" || fail "cannot create backup directory $BK"
   chmod 700 "$BK"

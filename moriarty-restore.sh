@@ -41,7 +41,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
     -n|--dry-run) DRY_RUN=1 ;;
-    -l|--list) ls -dt /root/opsec-backup.* 2>/dev/null || log "no backups found"; exit 0 ;;
+    -l|--list) ls -dt /root/moriarty-backup.* 2>/dev/null || log "no backups found"; exit 0 ;;
     -*) log "unknown option: $1 (try --help)"; exit 2 ;;
     *) BK=$1 ;;
   esac
@@ -50,7 +50,7 @@ done
 
 if [ -z "$BK" ]; then
   BK=""
-  for cand in /root/opsec-backup.*; do
+  for cand in /root/moriarty-backup.*; do
     [ -d "$cand" ] || continue
     case "$cand" in *.DRYRUN) continue ;; esac
     if [ -z "$BK" ] || [ "$cand" -nt "$BK" ]; then
