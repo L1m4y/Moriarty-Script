@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Moriarty - OPSEC hardening for Arch Linux
+# Moriarty - PRIVACY hardening for Arch Linux
 # https://github.com/L1m4y/Moriarty-Script
 #
 # Usage: sudo bash moriarty.sh
@@ -24,7 +24,7 @@ fail() { FAILED=1; echo -e "  ${R}[FAIL]${N} $1" >&2; exit 1; }
 
 usage() {
   cat <<EOF
-$PROG $VERSION - OPSEC hardening for Arch Linux
+$PROG $VERSION - PRIVACY hardening for Arch Linux
 
 Usage: sudo ./$PROG [options]
 
@@ -118,7 +118,7 @@ backup_path() {
   fi
   if [ -e "$src" ] || [ -L "$src" ]; then
     mkdir -p "$BK/$(dirname "$rel")" || fail "cannot create backup directory for $src"
-    cp -a "$src" "$BK/$rel" || fail "cannot back up $src"
+    cp -aT "$src" "$BK/$rel" || fail "cannot back up $src"
     printf 'modified %s\n' "$src" >> "$MANIFEST"
   else
     printf 'created %s\n' "$src" >> "$MANIFEST"
@@ -149,7 +149,7 @@ bup() { backup_path "$1"; }
 restore_path() {
   local src=$1 rel=${1#/}
   if grep -qxF "modified $src" "$MANIFEST" 2>/dev/null; then
-    cp -a "$BK/$rel" "$src" 2>/dev/null || return 1
+    cp -aT "$BK/$rel" "$src" 2>/dev/null || return 1
   elif grep -qxF "created $src" "$MANIFEST" 2>/dev/null; then
     rm -f "$src" 2>/dev/null || return 1
   fi
@@ -178,12 +178,10 @@ ufw_sysctl() {
   fi
 }
 
-echo -e "${B}== OPSEC MORIARTY ==${N}"
+echo -e "${B}== MORIARTY ==${N}"
 echo -e "${B}[1/7] Dependencies${N}"
 run pacman -S --needed --noconfirm dnscrypt-proxy bind || fail "dependency install failed (check network/mirrors)"
 ok "dnscrypt-proxy + dig"
-bup /etc/sysctl.conf
-bup /etc/sysctl.d
 echo -e "${B}[2/7] Sysctl hardening${N}"
 # Only values that the kernel does not already ship as defaults and that
 # systemd's 50-default.conf does not apply (rp_filter, accept_source_route,
@@ -286,7 +284,13 @@ echo -e "${B}[4/7] NetworkManager: identity per boot${N}"
 # written by Moriarty 1.x if they are still around.
 run rm -f /etc/systemd/network/10-moriarty-random-mac.link \
           /etc/systemd/network/11-moriarty-random-mac-wifi.link
-command -v nmcli >/dev/null 2>&1 || fail "NetworkManager is required"
+if ! command -v nmcli >/dev/null 2>&1; then
+  if [ "$DRY_RUN" -eq 1 ]; then
+    warn "NetworkManager not found; dry-run continues without nmcli"
+  else
+    fail "NetworkManager is required"
+  fi
+fi
 run mkdir -p /etc/NetworkManager/conf.d
 bup /etc/NetworkManager/conf.d/00-mac-ip-randomize.conf
 write_file /etc/NetworkManager/conf.d/00-mac-ip-randomize.conf << 'EOF'
@@ -305,9 +309,11 @@ EOF
 bup /etc/NetworkManager/conf.d/90-dns-none.conf
 printf '[main]\ndns=none\n' | write_file /etc/NetworkManager/conf.d/90-dns-none.conf
 run nmcli general reload 2>/dev/null || true
-nmcli -t -f NAME,TYPE connection show 2>/dev/null | grep -E ':802-3-ethernet$|:802-11-wireless$' | cut -d: -f1 | while IFS= read -r c; do
-  run nmcli connection modify "$c" ipv4.ignore-auto-dns yes ipv6.ignore-auto-dns yes ipv4.dns "" ipv6.dns "" 2>/dev/null || true
-done
+if command -v nmcli >/dev/null 2>&1; then
+  nmcli -t -f NAME,TYPE connection show 2>/dev/null | grep -E ':802-3-ethernet$|:802-11-wireless$' | cut -d: -f1 | while IFS= read -r c; do
+    run nmcli connection modify "$c" ipv4.ignore-auto-dns yes ipv6.ignore-auto-dns yes ipv4.dns "" ipv6.dns "" 2>/dev/null || true
+  done
+fi
 ok "NetworkManager ready"
 echo -e "${B}[5/7] Encrypted DNS (dnscrypt-proxy)${N}"
 bup /etc/dnscrypt-proxy/dnscrypt-proxy.toml

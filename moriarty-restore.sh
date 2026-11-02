@@ -82,7 +82,7 @@ while read -r action path; do
         continue
       fi
       run mkdir -p "$(dirname "$path")"
-      run cp -a "$BK/$rel" "$path"
+      run cp -aT "$BK/$rel" "$path"
       log "  restored $path"
       ;;
     created)
