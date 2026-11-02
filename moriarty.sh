@@ -363,9 +363,9 @@ if [ "$DRY_RUN" -eq 1 ]; then
   ok "dry-run: skipping DNS wait"
 else
   DNS_OK=""
-  for _ in 1 2 3 4 5; do
+  for _ in {1..15}; do
     sleep 2
-    [ -n "$(dig example.com @127.0.0.1 +short 2>/dev/null)" ] && { DNS_OK=1; break; }
+    [ -n "$(dig example.com @127.0.0.1 +short +time=2 +tries=1 2>/dev/null)" ] && { DNS_OK=1; break; }
   done
   [ -n "$DNS_OK" ] && ok "DNS resolves" || fail "DNS broken - run: systemctl status dnscrypt-proxy"
 fi
