@@ -243,7 +243,12 @@ fi
 if [ "$DRY_RUN" -eq 1 ]; then
   printf '  [dry-run] sysctl --system\n'
 else
-  sysctl --system >/dev/null 2>&1 || true
+  SYSCTL_OUT=$(sysctl --system 2>&1 || true)
+  printf '%s\n' "$SYSCTL_OUT" | grep -iE 'error|fail|cannot stat|permission denied' >&2 || true
+  if printf '%s\n' "$SYSCTL_OUT" | grep -qiE 'error|fail|cannot stat|permission denied'; then
+    printf '%s\n' "$SYSCTL_OUT" | grep -iE 'error|fail|cannot stat|permission denied' >&2
+    fail "sysctl failed to apply one or more hardening values"
+  fi
 fi
 ok "sysctl applied"
 echo -e "${B}[3/7] Modprobe: obscure protocols and filesystems${N}"
