@@ -74,6 +74,9 @@ fi
 log "Restoring from $BK"
 while read -r action path; do
   [ -n "${path:-}" ] || continue
+  # Reject unexpected paths from a manipulated manifest.
+  case "$path" in /*) ;; *) continue ;; esac
+  case "$path" in *..*) continue ;; esac
   case "$action" in
     modified)
       rel=${path#/}
@@ -94,6 +97,32 @@ while read -r action path; do
       ;;
   esac
 done < "$BK/MANIFEST"
+
+# Restore per-profile DNS settings recorded by Moriarty.
+profiles_file="$BK/networkmanager-profiles.tsv"
+if [ -f "$profiles_file" ] && command -v nmcli >/dev/null 2>&1; then
+  while IFS=$'\f' read -r profile_name profile_values; do
+    [ -n "$profile_name" ] || continue
+    IFS=':' read -r dns4 ignore4 dns6 ignore6 <<EOF
+$profile_values
+EOF
+    [ -n "$ignore4" ] || ignore4=no
+    [ -n "$ignore6" ] || ignore6=no
+    run nmcli connection modify "$profile_name" ipv4.dns "$dns4" ipv4.ignore-auto-dns "$ignore4" ipv6.dns "$dns6" ipv6.ignore-auto-dns "$ignore6" 2>/dev/null || true
+  done < "$profiles_file"
+fi
+
+# Restore the original activation state of the dnscrypt units.
+state_file="$BK/systemd-services.state"
+if [ -f "$state_file" ]; then
+  while read -r unit state; do
+    [ -n "$unit" ] || continue
+    case "$state" in
+      enabled) run systemctl --quiet enable "$unit" 2>/dev/null || true ;;
+      disabled) run systemctl --quiet disable "$unit" 2>/dev/null || true ;;
+    esac
+  done < "$state_file"
+fi
 
 run systemctl daemon-reload
 run sysctl --system
