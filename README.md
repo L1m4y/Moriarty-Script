@@ -27,7 +27,7 @@ A single-command configuration profile: per-boot hardware identity, encrypted DN
 | 3 | **Module blacklist** | Disables 27 obscure protocols and filesystems (`dccp`, `sctp`, `x25`, `atm`, `hfs`, `cramfs`, `squashfs`...) through `install ... /bin/false`. Built-in modules and manual `insmod` are not covered; `squashfs` is included, so Live ISO / install media will not mount unless the module is available |
 | 4 | **Identity per boot** | NetworkManager derives MAC, DHCP client-id, DHCPv6 DUID and IPv6 interface-ID from one per-boot `stable-id`: identity is stable while a boot lasts and rotates after every reboot. No hostname is sent over DHCP and IPv6 privacy extensions are enabled |
 | 5 | **Encrypted DNS** | `dnscrypt-proxy` on `127.0.0.1:53`, DNSSEC- and no-log-required, DNS-filtering disabled. NM's own DNS is switched off so queries cannot leak through it |
-| 6 | **resolved / avahi / ufw** | `systemd-resolved` forwards only to dnscrypt; LLMNR and mDNS off; Avahi publishing silenced; UFW `sysctl` file aligned with the profile because it otherwise overrides `/etc/sysctl.d` |
+| 6 | **resolved / avahi / ufw** | `systemd-resolved` is set to use dnscrypt for NSS/managed programs, but `/etc/resolv.conf` points directly at the proxy; LLMNR and mDNS off; Avahi publishing silenced; UFW is not enrolled by this script, its `sysctl` file is aligned because it otherwise overrides `/etc/sysctl.d` |
 | 7 | **Verification** | Kernel values, dnscrypt state, a real lookup through `/etc/resolv.conf`, and detection of any upstream DNS server still configured in `systemd-resolved` |
 
 <details>
@@ -104,6 +104,8 @@ sudo ./moriarty-restore.sh /root/moriarty-backup.<timestamp>
 - Verification queries the real system path (`/etc/resolv.conf`) and reports `systemd-resolved` upstreams different from `127.0.0.1` or `::1`, instead of scanning a hard-coded list of addresses.
 - Spare `systemd.link` rules created by older Moriarty versions are removed, so only the NetworkManager identity layer remains.
 - Settings persist across reboots. The MAC and DHCP identity change after every reboot; the assigned IP address is still chosen by the DHCP server.
+- UFW is not installed or enabled by this script: only its sysctl override file is aligned.
+- Verification is a functional check, not a security audit; successful DNS resolution does not prove that no traffic leaks outside the proxy.
 
 > [!WARNING]
 > The script replaces system-wide DNS and network configuration. Review before running on managed systems, containers, VMs, static-IP deployments, or machines using 802.1X or captive portals. Encrypted DNS hides the resolver from the network, not the destination: the TCP connections and, in most cases, the HTTPS SNI remain visible. This is not an anonymity tool.
