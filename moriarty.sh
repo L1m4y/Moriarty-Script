@@ -333,6 +333,9 @@ bup /etc/dnscrypt-proxy/dnscrypt-proxy.toml
 write_file /etc/dnscrypt-proxy/dnscrypt-proxy.toml << 'EOF'
 listen_addresses = ['127.0.0.1:53']
 server_names = ['quad9-dnscrypt-ip4-nofilter-pri', 'dns.digitale-gesellschaft.ch']
+# server_names pins the providers actually used; require_* is only
+# enforced by dnscrypt-proxy when server_names is left empty, so keep the
+# list audited for DNSSEC and no-logging behavior.
 require_dnssec = true
 require_nolog = true
 require_nofilter = true
@@ -394,6 +397,7 @@ echo -e "${B}[6/7] resolved dnscrypt-only + silent avahi + ufw${N}"
 run mkdir -p /etc/systemd/resolved.conf.d
 if [ -f /etc/systemd/resolved.conf.d/moriarty-dns.conf ]; then bup /etc/systemd/resolved.conf.d/moriarty-dns.conf; fi
 printf '[Resolve]\nDNS=127.0.0.1\nFallbackDNS=\nLLMNR=no\nMulticastDNS=no\nDNSSEC=no\n' | write_file /etc/systemd/resolved.conf.d/moriarty-dns.conf
+  # DNS points resolved's own clients at dnscrypt. libc clients that read /etc/resolv.conf directly bypass resolved.
 run systemctl restart systemd-resolved 2>/dev/null || true
 if [ -f /etc/avahi/avahi-daemon.conf ]; then
   bup /etc/avahi/avahi-daemon.conf
@@ -426,8 +430,9 @@ else
   systemctl is-active --quiet dnscrypt-proxy && ok "dnscrypt-proxy active" \
     || warn "dnscrypt-proxy is not active"
 
-  # Query the way applications do: through /etc/resolv.conf, not by
-  # pointing dig straight at 127.0.0.1, which bypasses resolved and NM.
+  # Query the way glibc-based applications do. /etc/resolv.conf points
+  # directly at dnscrypt-proxy, so this check does not exercise
+  # systemd-resolved; the upstream check below covers that path.
   if [ -n "$(dig +short +time=3 +tries=1 example.com 2>/dev/null)" ]; then
     ok "system resolver answers"
   else
