@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  shellcheck:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install checks
+        run: sudo apt-get update && sudo apt-get install -y shellcheck shfmt
+      - name: Bash syntax
+        run: bash -n moriarty.sh && bash -n moriarty-restore.sh && bash -n tests/run.sh
+      - name: ShellCheck
+        run: shellcheck -x moriarty.sh moriarty-restore.sh tests/run.sh
+      - name: shfmt
+        run: shfmt -d -i 2 -ci moriarty.sh moriarty-restore.sh tests/run.sh
+
+  tests:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system tools
+        run: pacman -Syu --noconfirm shellcheck shfmt
+      - name: Run tests
+        run: bash tests/run.sh
