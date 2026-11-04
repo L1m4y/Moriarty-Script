@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.3.0
+## 2.3.1
 
 Security and reliability rework.
 
@@ -31,6 +31,9 @@ Security and reliability rework.
 - Avahi and UFW handling remain clearly separate from firewall enrollment.
 
 ### Fixed
+- Test suite no longer depends on a local `/tmp/opencode` directory or on
+  `python3`; it uses a private temporary directory and `awk`, so the CI
+  `tests` job passes on a clean `archlinux:latest` container.
 - sysctl errors are no longer hidden.
 - NetworkManager profile DNS changes are now backed up and restored.
 - Manifest paths, ownership, mode and payload checksums are validated.
