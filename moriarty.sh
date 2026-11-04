@@ -10,7 +10,7 @@ IFS=$'\n\t'
 export LC_ALL=C
 
 PROG=${0##*/}
-VERSION='2.2.0'
+VERSION='2.3.0'
 
 PROFILE='balanced'
 DRY_RUN=0

@@ -11,7 +11,7 @@ IFS=$'\n\t'
 export LC_ALL=C
 
 PROG=${0##*/}
-VERSION='2.2.0'
+VERSION='2.3.0'
 
 DRY_RUN=0
 ASSUME_YES=0

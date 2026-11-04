@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.2.0
+## 2.3.0
 
 Security and reliability rework.
 
