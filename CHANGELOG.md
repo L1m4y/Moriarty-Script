@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.3.2
+
+### Fixed
+- Avahi: `disable-publishing` is now written to `[publish]`, the only section
+  where avahi accepts it, and stray copies in `[server]` are removed. This
+  fixes `avahi-daemon` failing with
+  `Invalid configuration key "disable-publishing" in group "server"`.
+- Avahi restart clears a previous `start-limit-hit`, so re-running Moriarty
+  recovers a unit that an older invalid configuration left failed.
+- BBR: `tcp_bbr` is loaded with `modprobe` and persisted through
+  `/etc/modules-load.d/99-moriarty-bbr.conf`, so
+  `net.ipv4.tcp_congestion_control=bbr` also works after a reboot. Previously
+  the script only inspected the loaded-module list and reported BBR as
+  unavailable.
+- The sysctl summary now counts and verifies the performance profile too, so a
+  performance mismatch is no longer silently ignored.
+
 ## 2.3.1
 
 Security and reliability rework.

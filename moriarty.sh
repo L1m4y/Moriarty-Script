@@ -10,7 +10,7 @@ IFS=$'\n\t'
 export LC_ALL=C
 
 PROG=${0##*/}
-VERSION='2.3.1'
+VERSION='2.3.2'
 
 PROFILE='balanced'
 DRY_RUN=0
@@ -302,6 +302,16 @@ EOF
   fi
 }
 
+ensure_bbr_module() {
+  sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null | grep -qw bbr && return 0
+  modprobe tcp_bbr 2>/dev/null || return 1
+  # Persist the module so the sysctl setting also applies on the next boot.
+  write_file /etc/modules-load.d/99-moriarty-bbr.conf <<'EOF'
+# Moriarty: load BBR so the persisted congestion-control setting works at boot.
+tcp_bbr
+EOF
+}
+
 build_performance_candidate() {
   local output=$1
   cat >"$output" <<'EOF'
@@ -313,7 +323,7 @@ EOF
   if sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null | grep -qw bbr; then
     printf '\nnet.ipv4.tcp_congestion_control = bbr\n' >>"$output"
   else
-    warn 'BBR is not available in this kernel; leaving congestion control unchanged.'
+    warn 'BBR is unavailable (tcp_bbr could not be loaded); leaving congestion control unchanged.'
   fi
 }
 
@@ -390,22 +400,15 @@ apply_sysctl_profile() {
     if [[ "$normalized_actual" == "$normalized_expected" ]]; then
       report_line 'applied' "$key = $expected (already set)"
       printf '%s = %s\n' "$key" "$expected" >>"$temporary"
-      SYSCTL_APPLIED=$((SYSCTL_APPLIED + 1))
       continue
     fi
     if sysctl -w "$key=$expected" >/dev/null 2>&1; then
       actual=$(sysctl -n "$key" 2>/dev/null || true)
       normalized_actual=$(normalize_ws "$actual")
       printf '%s = %s\n' "$key" "$expected" >>"$temporary"
-      if [[ "$normalized_actual" == "$normalized_expected" ]]; then
-        report_line 'applied' "$key = $expected"
-        SYSCTL_APPLIED=$((SYSCTL_APPLIED + 1))
-      else
-        record_status 'mismatch' "$key expected '$expected', kernel reports '$actual'"
-        SYSCTL_MISMATCH=$((SYSCTL_MISMATCH + 1))
-        if is_mandatory_sysctl "$key"; then
-          SYSCTL_FAILURES=$((SYSCTL_FAILURES + 1))
-        fi
+      if [[ "$normalized_actual" != "$normalized_expected" ]]; then
+        # The post-load verification counts the mismatch after sysctl --system.
+        report_line 'mismatch' "$key expected '$expected', kernel reports '$actual'"
       fi
     else
       record_status 'rejected' "$key = $expected was rejected by the kernel"
@@ -430,14 +433,19 @@ apply_performance_profile() {
 }
 
 load_and_verify_sysctl() {
-  local hardening_file=$1 log line key expected actual
+  local log line key expected actual path rejected=0
   log=$(mktemp /tmp/moriarty-sysctl.XXXXXX)
   report_section 'sysctl load'
   if ! sysctl --system >"$log" 2>&1; then
-    if grep -Fq -- "$(basename "$hardening_file")" "$log"; then
+    for path in "$@"; do
+      if grep -Fq -- "$(basename "$path")" "$log"; then
+        rejected=1
+      fi
+    done
+    if ((rejected)); then
       cat "$log" >&2
       rm -f -- "$log"
-      die 'sysctl --system rejected the Moriarty hardening file'
+      die 'sysctl --system rejected a Moriarty profile'
     fi
     warn 'sysctl --system reported errors in files not owned by Moriarty; see report'
     while IFS= read -r line; do
@@ -447,27 +455,32 @@ load_and_verify_sysctl() {
   fi
   rm -f -- "$log"
 
-  while IFS='=' read -r key expected; do
-    key=$(printf '%s' "$key" | tr -d '[:space:]')
-    [[ -n "$key" && "$key" != \#* ]] || continue
-    expected=$(printf '%s' "$expected" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')
-    actual=$(sysctl -n "$key" 2>/dev/null || true)
-    if [[ -z "$actual" ]]; then
-      record_status 'unsupported' "$key is not present after loading the profile"
-      SYSCTL_UNSUPPORTED=$((SYSCTL_UNSUPPORTED + 1))
-      if is_mandatory_sysctl "$key"; then
-        SYSCTL_FAILURES=$((SYSCTL_FAILURES + 1))
+  for path in "$@"; do
+    while IFS='=' read -r key expected; do
+      key=$(printf '%s' "$key" | tr -d '[:space:]')
+      [[ -n "$key" && "$key" != \#* ]] || continue
+      expected=$(printf '%s' "$expected" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')
+      actual=$(sysctl -n "$key" 2>/dev/null || true)
+      if [[ -z "$actual" ]]; then
+        record_status 'unsupported' "$key is not present after loading the profile"
+        SYSCTL_UNSUPPORTED=$((SYSCTL_UNSUPPORTED + 1))
+        if is_mandatory_sysctl "$key"; then
+          SYSCTL_FAILURES=$((SYSCTL_FAILURES + 1))
+        fi
+        continue
       fi
-      continue
-    fi
-    if [[ "$(normalize_ws "$actual")" != "$(normalize_ws "$expected")" ]]; then
-      record_status 'mismatch' "$key was overridden after sysctl --system (expected '$expected', got '$actual')"
-      SYSCTL_MISMATCH=$((SYSCTL_MISMATCH + 1))
-      if is_mandatory_sysctl "$key"; then
-        SYSCTL_FAILURES=$((SYSCTL_FAILURES + 1))
+      if [[ "$(normalize_ws "$actual")" != "$(normalize_ws "$expected")" ]]; then
+        record_status 'mismatch' "$key was overridden after sysctl --system (expected '$expected', got '$actual')"
+        SYSCTL_MISMATCH=$((SYSCTL_MISMATCH + 1))
+        if is_mandatory_sysctl "$key"; then
+          SYSCTL_FAILURES=$((SYSCTL_FAILURES + 1))
+        fi
+      else
+        report_line 'applied' "$key = $expected"
+        SYSCTL_APPLIED=$((SYSCTL_APPLIED + 1))
       fi
-    fi
-  done <"$hardening_file"
+    done <"$path"
+  done
 
   ((SYSCTL_FAILURES == 0)) ||
     die "mandatory sysctl settings failed; review $REPORT_FILE"
@@ -995,25 +1008,32 @@ set_avahi_publishing_off() {
   temporary=$(mktemp /etc/avahi/.avahi-daemon.conf.moriarty.XXXXXX) ||
     die 'cannot create Avahi temporary file'
   awk '
-    BEGIN { in_server=0; server_seen=0; key_seen=0 }
+    BEGIN { section=""; in_publish=0; publish_seen=0; key_seen=0 }
     /^\[[^]]+\][[:space:]]*$/ {
-      if (in_server && !key_seen) { print "disable-publishing=yes"; key_seen=1 }
-      in_server=($0 == "[server]")
-      if (in_server) server_seen=1
+      if (in_publish && !key_seen) { print "disable-publishing=yes"; key_seen=1 }
+      section=$0
+      sub(/^\[/, "", section)
+      sub(/\].*$/, "", section)
+      section=tolower(section)
+      in_publish=(section == "publish")
+      if (in_publish) publish_seen=1
       print
       next
     }
     {
-      if (in_server && $0 ~ /^[[:space:]]*#?[[:space:]]*disable-publishing[[:space:]]*=/) {
-        if (!key_seen) print "disable-publishing=yes"
-        key_seen=1
+      if ($0 ~ /^[[:space:]]*#?[[:space:]]*disable-publishing[[:space:]]*=/) {
+        # Drop the key everywhere else; it is only valid in [publish].
+        if (in_publish) {
+          if (!key_seen) print "disable-publishing=yes"
+          key_seen=1
+        }
         next
       }
       print
     }
     END {
-      if (in_server && !key_seen) print "disable-publishing=yes"
-      if (!server_seen) print "\n[server]\ndisable-publishing=yes"
+      if (in_publish && !key_seen) print "disable-publishing=yes"
+      if (!publish_seen) print "\n[publish]\ndisable-publishing=yes"
     }
   ' "$file" >"$temporary" || {
     rm -f -- "$temporary"
@@ -1422,6 +1442,7 @@ main() {
   candidate="$BACKUP_DIR/sysctl-candidate.conf"
   performance="$BACKUP_DIR/performance-candidate.conf"
   build_sysctl_candidate "$candidate"
+  ensure_bbr_module || true
   build_performance_candidate "$performance"
 
   capture_sysctl_state "$candidate" "$performance"
@@ -1450,8 +1471,9 @@ main() {
   log '[2/7] Applying sysctl hardening and performance profiles'
   apply_sysctl_profile "$candidate" /etc/sysctl.d/99-moriarty-hardening.conf 'hardening'
   apply_performance_profile "$performance" /etc/sysctl.d/99-moriarty-performance.conf
-  load_and_verify_sysctl /etc/sysctl.d/99-moriarty-hardening.conf
-  ok 'sysctl profiles applied and verified'
+  load_and_verify_sysctl \
+    /etc/sysctl.d/99-moriarty-hardening.conf \
+    /etc/sysctl.d/99-moriarty-performance.conf
 
   log '[3/7] Configuring module blacklist'
   if ((SKIP_MODULES)); then
@@ -1516,8 +1538,12 @@ EOF
     ok 'Avahi phase skipped'
   else
     set_avahi_publishing_off
-    if [[ -f /etc/avahi/avahi-daemon.conf ]]; then
-      systemctl try-restart avahi-daemon >/dev/null 2>&1 ||
+    if [[ -f /etc/avahi/avahi-daemon.conf ]] &&
+      { systemctl is-active --quiet avahi-daemon ||
+        systemctl is-enabled --quiet avahi-daemon; }; then
+      # Clear a start-limit-hit left behind by an older, invalid configuration.
+      systemctl reset-failed avahi-daemon.service avahi-daemon.socket >/dev/null 2>&1 || true
+      systemctl restart avahi-daemon >/dev/null 2>&1 ||
         warn 'Avahi config saved, but avahi-daemon could not be restarted'
     fi
   fi

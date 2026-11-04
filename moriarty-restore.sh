@@ -11,7 +11,7 @@ IFS=$'\n\t'
 export LC_ALL=C
 
 PROG=${0##*/}
-VERSION='2.3.1'
+VERSION='2.3.2'
 
 DRY_RUN=0
 ASSUME_YES=0
@@ -68,6 +68,7 @@ allowed_path() {
       /etc/sysctl.d/99-performance.conf | \
       /etc/modprobe.d/99-moriarty-blacklist.conf | \
       /etc/modprobe.d/blacklist-obscure.conf | \
+      /etc/modules-load.d/99-moriarty-bbr.conf | \
       /etc/systemd/network/10-moriarty-random-mac.link | \
       /etc/systemd/network/11-moriarty-random-mac-wifi.link | \
       /etc/systemd/network/10-garbato-random-mac.link | \
