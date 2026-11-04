@@ -1,211 +1,353 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
-#
-# Moriarty - PRIVACY hardening for Arch Linux
-# https://github.com/L1m4y/Moriarty-Script
-#
-# Usage: sudo bash moriarty.sh
-# Requirements: Arch Linux (or derivative), systemd, NetworkManager, pacman
-#
-set -e
-PROG="${0##*/}"
-VERSION="2.0.0"
+# Moriarty - host privacy/hardening profile for Arch Linux and derivatives.
+# Requires: systemd, NetworkManager, pacman, dnscrypt-proxy (installed by script), bind (dig).
 
-if [ -t 1 ]; then
-  R='\033[0;31m'; G='\033[0;32m'; Y='\033[1;33m'; B='\033[1m'; N='\033[0m'
+set -Eeuo pipefail
+IFS=$'\n\t'
+
+PROG=${0##*/}
+VERSION='2.1.0'
+DRY_RUN=0
+ASSUME_YES=0
+USE_COLOR=1
+BACKUP_DIR=''
+MANIFEST=''
+DNS_SWITCHED=0
+LOCK_FILE='/run/lock/moriarty.lock'
+
+if [[ -t 1 ]]; then
+  RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; YELLOW=$'\033[1;33m'; BOLD=$'\033[1m'; RESET=$'\033[0m'
 else
-  R=''; G=''; Y=''; B=''; N=''
+  RED=''; GREEN=''; YELLOW=''; BOLD=''; RESET=''
 fi
 
-ok() { echo -e "  ${G}[OK]${N} $1"; }
-warn() { echo -e "  ${Y}[!]${N} $1" >&2; }
-FAILED=0
-fail() { FAILED=1; echo -e "  ${R}[FAIL]${N} $1" >&2; exit 1; }
+log()  { printf '%s\n' "$*"; }
+ok()   { printf '  %s[OK]%s %s\n' "$GREEN" "$RESET" "$*"; }
+warn() { printf '  %s[!]%s %s\n' "$YELLOW" "$RESET" "$*" >&2; }
+die()  { printf '  %s[FAIL]%s %s\n' "$RED" "$RESET" "$*" >&2; exit 1; }
 
 usage() {
   cat <<EOF
-$PROG $VERSION - PRIVACY hardening for Arch Linux
+$PROG $VERSION - privacy and host hardening for Arch Linux
 
 Usage: sudo ./$PROG [options]
 
 Options:
   -h, --help       Show this help and exit
-  -V, --version    Show the version and exit
-  -n, --dry-run    Show what would change without modifying the system
+  -V, --version    Show version and exit
+  -n, --dry-run    Show planned operations without changing the system
   -y, --yes        Do not ask for confirmation
       --no-color   Disable colored output
+
+A root-owned backup is created in /root/moriarty-backup.*.
+Restore with: sudo ./moriarty-restore.sh [backup-directory]
 EOF
 }
 
-ASSUME_YES=0
-USE_COLOR=1
-DRY_RUN=0
-while [ $# -gt 0 ]; do
+while (($#)); do
   case "$1" in
     -h|--help) usage; exit 0 ;;
-    -V|--version) echo "$PROG $VERSION"; exit 0 ;;
+    -V|--version) printf '%s %s\n' "$PROG" "$VERSION"; exit 0 ;;
     -n|--dry-run) DRY_RUN=1 ;;
     -y|--yes) ASSUME_YES=1 ;;
     --no-color) USE_COLOR=0 ;;
-    *) fail "unknown option: $1 (try --help)" ;;
+    *) die "unknown option: $1 (try --help)" ;;
   esac
   shift
 done
 
-if [ "$USE_COLOR" -eq 0 ]; then
-  R=''; G=''; Y=''; B=''; N=''
-fi
+if ((USE_COLOR == 0)); then RED=''; GREEN=''; YELLOW=''; BOLD=''; RESET=''; fi
 
-if [ "$DRY_RUN" -ne 1 ]; then
-  [ "$EUID" -ne 0 ] && fail "run as root: sudo bash $0"
-fi
-
-if [ "$ASSUME_YES" -ne 1 ] && [ "$DRY_RUN" -ne 1 ]; then
-  if [ ! -t 0 ]; then
-    fail "non-interactive shell: use --yes"
-  fi
-  echo -e "${Y}This will modify /etc and network settings.${N}"
-  read -r -p "Continue? [y/N] " reply
-  case "$reply" in
-    [yY]|[yY][eE][sS]) ;;
-    *) echo "Aborted."; exit 1 ;;
-  esac
-fi
-
-TS=$(date +%Y%m%d_%H%M%S)
-if [ "$DRY_RUN" -eq 1 ]; then
-  BK="/root/moriarty-backup.DRYRUN"
-  MANIFEST=/dev/null
-else
-  BK="/root/moriarty-backup.$TS"
-  MANIFEST="$BK/MANIFEST"
-  mkdir -p "$BK" || fail "cannot create backup directory $BK"
-  chmod 700 "$BK"
-  : > "$MANIFEST" || fail "cannot write $MANIFEST"
-fi
-
-on_exit() {
-  local rc=$?
-  if [ "$rc" -ne 0 ] && [ "$DRY_RUN" -eq 0 ]; then
-    if [ "$FAILED" -eq 0 ]; then
-      echo -e "  ${R}[FAIL]${N} Moriarty stopped with exit $rc" >&2
-    fi
-    rollback_dns
-    echo "  DNS resolver files restored" >&2
-    echo "  Backup: ${BK:-none}" >&2
-    echo "  Full restore: sudo ./moriarty-restore.sh ${BK:-<backup-dir>}" >&2
-  fi
-}
-trap on_exit EXIT
-
-# Run a state-changing command, or print it in dry-run mode.
 run() {
-  if [ "$DRY_RUN" -eq 1 ]; then
-    printf '  [dry-run] %s\n' "$*"
+  if ((DRY_RUN)); then
+    printf '  [dry-run]'
+    printf ' %q' "$@"
+    printf '\n'
   else
     "$@"
   fi
 }
 
-# Back up a path preserving symlinks. Record whether it existed so the
-# restore script can remove files that Moriarty created.
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || die "required command not found: $1"
+}
+
+# Paths handled by this program are intentionally explicit. The restore tool
+# has the same allow-list; a backup manifest can never select arbitrary paths.
+manifest_has() {
+  local action=$1 path=$2 entry
+  printf -v entry '%s\t%s' "$action" "$path"
+  [[ -f "$MANIFEST" ]] && grep -Fqx -- "$entry" "$MANIFEST"
+}
+
 backup_path() {
-  local src=$1 rel=${1#/}
-  [ "$DRY_RUN" -eq 1 ] && return 0
-  if grep -qxF "modified $src" "$MANIFEST" 2>/dev/null ||
-     grep -qxF "created $src" "$MANIFEST" 2>/dev/null; then
+  local source=$1 relative target
+  ((DRY_RUN)) && return 0
+  relative=${source#/}
+  if manifest_has modified "$source" || manifest_has created "$source"; then
     return 0
   fi
-  if [ -e "$src" ] || [ -L "$src" ]; then
-    mkdir -p "$BK/$(dirname "$rel")" || fail "cannot create backup directory for $src"
-    cp -aT "$src" "$BK/$rel" || fail "cannot back up $src"
-    printf 'modified %s\n' "$src" >> "$MANIFEST"
+  target="$BACKUP_DIR/$relative"
+  if [[ -e "$source" || -L "$source" ]]; then
+    install -d -m 0700 -- "$(dirname "$target")"
+    cp -aT -- "$source" "$target" || die "could not back up $source"
+    printf 'modified\t%s\n' "$source" >> "$MANIFEST"
   else
-    printf 'created %s\n' "$src" >> "$MANIFEST"
+    printf 'created\t%s\n' "$source" >> "$MANIFEST"
   fi
 }
 
-# Write a file atomically, after backing it up. Reads the new content
-# from stdin so callers can keep using heredocs.
 write_file() {
-  local dest=$1 tmp
-  if [ "$DRY_RUN" -eq 1 ]; then
-    printf '  [dry-run] would write %s\n' "$dest"
+  local destination=$1 directory temporary
+  directory=$(dirname "$destination")
+  if ((DRY_RUN)); then
+    printf '  [dry-run] would replace %s\n' "$destination"
     cat >/dev/null
     return 0
   fi
-  backup_path "$dest"
-  mkdir -p "$(dirname "$dest")" || fail "cannot create directory for $dest"
-  tmp="${dest}.moriarty.$$"
-  cat > "$tmp" || { rm -f "$tmp"; fail "cannot write $dest"; }
-  chmod 644 "$tmp"
-  mv -f "$tmp" "$dest" || { rm -f "$tmp"; fail "cannot install $dest"; }
-}
-
-bup() { backup_path "$1"; }
-
-# Put a single path back from the backup tree, or remove it if Moriarty
-# created it. Used by the failure rollback below.
-restore_path() {
-  local src=$1 rel=${1#/}
-  if grep -qxF "modified $src" "$MANIFEST" 2>/dev/null; then
-    cp -aT "$BK/$rel" "$src" 2>/dev/null || return 1
-  elif grep -qxF "created $src" "$MANIFEST" 2>/dev/null; then
-    rm -f "$src" 2>/dev/null || return 1
+  backup_path "$destination"
+  install -d -m 0755 -- "$directory"
+  temporary=$(mktemp "$directory/.${destination##*/}.moriarty.XXXXXX") || die "cannot create temporary file for $destination"
+  if ! cat > "$temporary"; then
+    rm -f -- "$temporary"
+    die "cannot write temporary file for $destination"
+  fi
+  chmod 0644 "$temporary"
+  if ! mv -fT -- "$temporary" "$destination"; then
+    rm -f -- "$temporary"
+    die "cannot install $destination"
   fi
 }
 
-# If the script dies after resolv.conf and NetworkManager have been
-# repointed at a dnscrypt instance that never came up, the machine is left
-# without DNS. Undo the two files that cause that, nothing else.
-rollback_dns() {
-  [ -n "${BK:-}" ] && [ -d "$BK" ] || return 0
-  restore_path /etc/resolv.conf || true
-  restore_path /etc/NetworkManager/conf.d/90-dns-none.conf || true
-  systemctl --quiet restart NetworkManager >/dev/null 2>&1 || true
-  if command -v resolvectl >/dev/null 2>&1; then
-    systemctl --quiet restart systemd-resolved >/dev/null 2>&1 || true
+restore_one_path() {
+  local path=$1 relative saved
+  ((DRY_RUN)) && { printf '  [dry-run] rollback %s\n' "$path"; return 0; }
+  relative=${path#/}
+  saved="$BACKUP_DIR/$relative"
+  if manifest_has modified "$path"; then
+    [[ -e "$saved" || -L "$saved" ]] || return 1
+    install -d -m 0755 -- "$(dirname "$path")"
+    cp -aT -- "$saved" "$path"
+  elif manifest_has created "$path"; then
+    rm -f -- "$path"
   fi
 }
 
-# Rewrite a key in ufw's sysctl file, appending it when absent.
-ufw_sysctl() {
-  local key=$1 val=$2 file=/etc/ufw/sysctl.conf
-  if grep -qE "^#?${key}=" "$file"; then
-    sed -i -E "s|^#?${key}=.*|${key}=${val}|" "$file"
-  else
-    printf '%s=%s\n' "$key" "$val" >> "$file"
-  fi
+rollback_dns_files() {
+  ((DRY_RUN || DNS_SWITCHED == 0)) && return 0
+  [[ -n "$BACKUP_DIR" && -d "$BACKUP_DIR" ]] || return 0
+  warn 'DNS setup failed after the resolver switch; restoring resolver routing files.'
+  restore_one_path /etc/resolv.conf || true
+  restore_one_path /etc/NetworkManager/conf.d/90-dns-none.conf || true
+  restore_one_path /etc/systemd/resolved.conf.d/moriarty-dns.conf || true
+  systemctl try-restart NetworkManager >/dev/null 2>&1 || true
+  systemctl try-restart systemd-resolved >/dev/null 2>&1 || true
 }
 
-echo -e "${B}== MORIARTY ==${N}"
-echo -e "${B}[1/7] Dependencies${N}"
-run pacman -S --needed --noconfirm dnscrypt-proxy bind || fail "dependency install failed (check network/mirrors)"
-ok "dnscrypt-proxy + dig"
-echo -e "${B}[2/7] Sysctl hardening${N}"
-# Values that are already kernel defaults or that systemd's 50-default.conf
-# applies reliably (rp_filter, accept_source_route, protected_{hardlinks,symlinks})
-# are left out. The rest are kept explicit so the profile can be read offline.
-# Throughput knobs live in 99-performance.conf.
-write_file /etc/sysctl.d/99-hardening.conf << 'EOF'
+on_exit() {
+  local status=$?
+  if ((status != 0)); then
+    rollback_dns_files
+    if [[ -n "$BACKUP_DIR" ]]; then
+      printf '\nBackup retained at: %s\n' "$BACKUP_DIR" >&2
+      printf 'Full restore: sudo ./moriarty-restore.sh %q\n' "$BACKUP_DIR" >&2
+    fi
+  fi
+  exit "$status"
+}
+trap on_exit EXIT
+
+capture_sysctl_state() {
+  local key value encoded
+  local -a keys=(
+    kernel.kptr_restrict kernel.dmesg_restrict kernel.printk
+    vm.mmap_rnd_bits vm.mmap_rnd_compat_bits net.core.bpf_jit_harden
+    kernel.sysrq dev.tty.ldisc_autoload vm.unprivileged_userfaultfd
+    dev.tty.legacy_tiocsti fs.protected_fifos fs.protected_regular
+    net.ipv4.conf.all.accept_redirects net.ipv4.conf.default.accept_redirects
+    net.ipv4.conf.all.secure_redirects net.ipv4.conf.default.secure_redirects
+    net.ipv4.conf.all.send_redirects net.ipv4.conf.default.send_redirects
+    net.ipv6.conf.all.accept_source_route net.ipv6.conf.default.accept_source_route
+    net.ipv4.conf.all.log_martians net.ipv4.conf.default.log_martians
+    net.ipv4.conf.all.arp_filter net.ipv4.conf.default.arp_filter
+    net.ipv4.conf.all.arp_ignore net.ipv4.conf.all.arp_announce
+    net.ipv4.tcp_synack_retries net.ipv4.tcp_rfc1337
+    net.ipv6.conf.all.use_tempaddr net.ipv6.conf.default.use_tempaddr
+    net.ipv6.conf.all.accept_redirects net.ipv6.conf.default.accept_redirects
+    net.core.default_qdisc net.ipv4.tcp_max_syn_backlog
+    net.ipv4.tcp_slow_start_after_idle net.ipv4.tcp_congestion_control
+    net.ipv4.conf.all.rp_filter net.ipv4.conf.default.rp_filter
+  )
+  : > "$BACKUP_DIR/sysctl-runtime.tsv"
+  chmod 0600 "$BACKUP_DIR/sysctl-runtime.tsv"
+  for key in "${keys[@]}"; do
+    if value=$(sysctl -n "$key" 2>/dev/null); then
+      encoded=$(printf '%s' "$value" | base64 -w0)
+      printf '%s\t%s\n' "$key" "$encoded" >> "$BACKUP_DIR/sysctl-runtime.tsv"
+    fi
+  done
+}
+
+capture_service_state() {
+  local unit enabled active
+  local -a units=(
+    dnscrypt-proxy.service dnscrypt-proxy.socket
+    NetworkManager.service systemd-resolved.service avahi-daemon.service
+  )
+  : > "$BACKUP_DIR/systemd-units.tsv"
+  chmod 0600 "$BACKUP_DIR/systemd-units.tsv"
+  for unit in "${units[@]}"; do
+    enabled=$(systemctl is-enabled "$unit" 2>/dev/null || true)
+    active=$(systemctl is-active "$unit" 2>/dev/null || true)
+    [[ -n "$enabled" ]] || enabled=not-found
+    [[ -n "$active" ]] || active=inactive
+    printf '%s\t%s\t%s\n' "$unit" "$enabled" "$active" >> "$BACKUP_DIR/systemd-units.tsv"
+  done
+}
+
+base64_encode() { printf '%s' "$1" | base64 -w0; }
+
+capture_networkmanager_profiles() {
+  local listing uuid type dns4 ignore4 dns6 ignore6
+  [[ -f "$BACKUP_DIR/networkmanager-profiles.tsv" ]] && return 0
+  : > "$BACKUP_DIR/networkmanager-profiles.tsv"
+  chmod 0600 "$BACKUP_DIR/networkmanager-profiles.tsv"
+  listing=$(nmcli -t -f UUID,TYPE connection show 2>/dev/null) || die 'cannot enumerate NetworkManager profiles'
+  while IFS=: read -r uuid type; do
+    [[ "$type" == '802-3-ethernet' || "$type" == '802-11-wireless' ]] || continue
+    [[ "$uuid" =~ ^[0-9a-fA-F-]{36}$ ]] || continue
+    dns4=$(nmcli -g ipv4.dns connection show "$uuid" 2>/dev/null || true)
+    ignore4=$(nmcli -g ipv4.ignore-auto-dns connection show "$uuid" 2>/dev/null || true)
+    dns6=$(nmcli -g ipv6.dns connection show "$uuid" 2>/dev/null || true)
+    ignore6=$(nmcli -g ipv6.ignore-auto-dns connection show "$uuid" 2>/dev/null || true)
+    printf '%s|%s|%s|%s|%s\n' \
+      "$uuid" "$(base64_encode "$dns4")" "$(base64_encode "$ignore4")" \
+      "$(base64_encode "$dns6")" "$(base64_encode "$ignore6")" \
+      >> "$BACKUP_DIR/networkmanager-profiles.tsv"
+  done <<< "$listing"
+}
+
+set_ufw_sysctl() {
+  local key=$1 value=$2 file=/etc/ufw/sysctl.conf temporary
+  local output
+  [[ -f "$file" ]] || return 0
+  backup_path "$file"
+  temporary=$(mktemp /etc/ufw/.sysctl.conf.moriarty.XXXXXX) || die 'cannot create UFW sysctl temporary file'
+  output=$(awk -v key="$key" -v value="$value" '
+    BEGIN { prefix=key "="; found=0 }
+    {
+      line=$0
+      normalized=line
+      sub(/^[[:space:]]*#[[:space:]]*/, "", normalized)
+      sub(/^[[:space:]]*/, "", normalized)
+      if (index(normalized, prefix) == 1) {
+        if (!found) print key "=" value
+        found=1
+      } else {
+        print line
+      }
+    }
+    END { if (!found) print key "=" value }
+  ' "$file") || { rm -f -- "$temporary"; die 'cannot update UFW sysctl settings'; }
+  printf '%s\n' "$output" > "$temporary"
+  chmod --reference="$file" "$temporary"
+  chown --reference="$file" "$temporary"
+  mv -fT -- "$temporary" "$file"
+}
+
+set_avahi_publishing_off() {
+  local file=/etc/avahi/avahi-daemon.conf temporary
+  [[ -f "$file" ]] || { warn 'Avahi is not installed; skipping its configuration'; return 0; }
+  backup_path "$file"
+  temporary=$(mktemp /etc/avahi/.avahi-daemon.conf.moriarty.XXXXXX) || die 'cannot create Avahi temporary file'
+  awk '
+    BEGIN { in_server=0; server_seen=0; key_seen=0 }
+    /^\[[^]]+\][[:space:]]*$/ {
+      if (in_server && !key_seen) { print "disable-publishing=yes"; key_seen=1 }
+      in_server=($0 == "[server]")
+      if (in_server) server_seen=1
+      print
+      next
+    }
+    {
+      if (in_server && $0 ~ /^[[:space:]]*#?[[:space:]]*disable-publishing[[:space:]]*=/) {
+        if (!key_seen) print "disable-publishing=yes"
+        key_seen=1
+        next
+      }
+      print
+    }
+    END {
+      if (in_server && !key_seen) print "disable-publishing=yes"
+      if (!server_seen) print "\n[server]\ndisable-publishing=yes"
+    }
+  ' "$file" > "$temporary" || { rm -f -- "$temporary"; die 'cannot update Avahi configuration'; }
+  chmod --reference="$file" "$temporary"
+  chown --reference="$file" "$temporary"
+  mv -fT -- "$temporary" "$file"
+}
+
+printf '%s%s== MORIARTY %s ==%s\n' "$BOLD" '' "$VERSION" "$RESET"
+
+if ((DRY_RUN)); then
+  log '[1/7] Dependencies: would install dnscrypt-proxy and bind with pacman.'
+  log '[2/7] Sysctl: would save current values and install reversible hardening/performance profiles.'
+  log '[3/7] Modprobe: would configure the optional protocol/filesystem blacklist.'
+  log '[4/7] NetworkManager: would set per-boot stable identity and disable profile-provided DNS.'
+  log '[5/7] DNSCrypt: would configure, validate, start and test the local resolver.'
+  log '[6/7] resolved/Avahi/UFW: would apply the corresponding configuration where present.'
+  log '[7/7] Verification: would test the system resolver and DNSCrypt endpoint.'
+  exit 0
+fi
+
+((EUID == 0)) || die "run as root: sudo bash $PROG"
+[[ -r /etc/os-release ]] || die '/etc/os-release is missing'
+# shellcheck disable=SC1091
+. /etc/os-release
+[[ "${ID:-}" == arch ]] || [[ " ${ID_LIKE:-} " == *"arch"* ]] || warn "This is not a detected Arch Linux system; continuing at your own risk."
+
+for cmd in pacman systemctl sysctl nmcli base64 flock realpath stat mktemp; do require_command "$cmd"; done
+
+if ((ASSUME_YES == 0)); then
+  [[ -t 0 ]] || die 'non-interactive shell: use --yes'
+  printf '%sThis modifies /etc, kernel settings, NetworkManager and DNS.%s\n' "$YELLOW" "$RESET"
+  read -r -p 'Continue? [y/N] ' answer
+  [[ "$answer" =~ ^([yY]|[yY][eE][sS])$ ]] || { log 'Aborted.'; exit 1; }
+fi
+
+install -d -m 0755 /run/lock
+exec 9>"$LOCK_FILE"
+flock -n 9 || die 'another Moriarty process is already running'
+
+BACKUP_DIR=$(mktemp -d /root/moriarty-backup.XXXXXXXX) || die 'cannot create backup directory'
+chmod 0700 "$BACKUP_DIR"
+MANIFEST="$BACKUP_DIR/MANIFEST"
+: > "$MANIFEST"
+chmod 0600 "$MANIFEST"
+
+capture_sysctl_state
+capture_service_state
+capture_networkmanager_profiles
+
+log '[1/7] Installing dependencies'
+pacman -S --needed --noconfirm dnscrypt-proxy bind || die 'dependency installation failed; check network and pacman mirrors'
+require_command dig
+ok 'dnscrypt-proxy and bind are installed'
+
+log '[2/7] Applying sysctl hardening and performance profiles'
+write_file /etc/sysctl.d/99-hardening.conf <<'EOF'
+# Moriarty: reversible hardening profile.
 kernel.kptr_restrict = 2
 kernel.dmesg_restrict = 1
 kernel.printk = 3 3 3 3
 vm.mmap_rnd_bits = 32
 vm.mmap_rnd_compat_bits = 16
-kernel.unprivileged_bpf_disabled = 1
 net.core.bpf_jit_harden = 2
-kernel.kexec_load_disabled = 1
 kernel.sysrq = 0
 dev.tty.ldisc_autoload = 0
 vm.unprivileged_userfaultfd = 0
-kernel.io_uring_disabled = 1
 dev.tty.legacy_tiocsti = 0
-# Reboot 30s after a kernel oops so the backtrace reaches the journal.
-# Do not set warn_limit=1: it is panic_on_warn and a benign WARN in a
-# driver would turn into a reboot loop.
-kernel.oops_limit = 1
-kernel.panic = 30
 fs.protected_fifos = 2
 fs.protected_regular = 2
 net.ipv4.conf.all.accept_redirects = 0
@@ -229,31 +371,38 @@ net.ipv6.conf.default.use_tempaddr = 2
 net.ipv6.conf.all.accept_redirects = 0
 net.ipv6.conf.default.accept_redirects = 0
 EOF
-write_file /etc/sysctl.d/99-performance.conf << 'EOF'
-# Throughput tuning, not hardening. Remove this file if you do not want it.
+
+write_file /etc/sysctl.d/99-performance.conf <<'EOF'
+# Moriarty: performance tuning, separate from security policy.
 net.core.default_qdisc = fq
 net.ipv4.tcp_max_syn_backlog = 8192
 net.ipv4.tcp_slow_start_after_idle = 0
 EOF
-if [ "$DRY_RUN" -eq 1 ]; then
-  printf '  [dry-run] would enable BBR if available\n'
-elif sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null | grep -qw bbr; then
-  echo "net.ipv4.tcp_congestion_control = bbr" >> /etc/sysctl.d/99-performance.conf
-fi
-if [ "$DRY_RUN" -eq 1 ]; then
-  printf '  [dry-run] sysctl --system\n'
+
+if sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null | grep -qw bbr; then
+  printf '\nnet.ipv4.tcp_congestion_control = bbr\n' >> /etc/sysctl.d/99-performance.conf
 else
-  SYSCTL_OUT=$(sysctl --system 2>&1 || true)
-  printf '%s\n' "$SYSCTL_OUT" | grep -iE 'error|fail|cannot stat|permission denied' >&2 || true
-  if printf '%s\n' "$SYSCTL_OUT" | grep -qiE 'error|fail|cannot stat|permission denied'; then
-    printf '%s\n' "$SYSCTL_OUT" | grep -iE 'error|fail|cannot stat|permission denied' >&2
-    fail "sysctl failed to apply one or more hardening values"
-  fi
+  warn 'BBR is not available in this kernel; leaving congestion control unchanged.'
 fi
-ok "sysctl applied"
-echo -e "${B}[3/7] Modprobe: obscure protocols and filesystems${N}"
-bup /etc/modprobe.d/blacklist-obscure.conf
-write_file /etc/modprobe.d/blacklist-obscure.conf << 'EOF'
+
+SYSCTL_LOG=$(mktemp /run/moriarty-sysctl.XXXXXX)
+if ! sysctl --system >"$SYSCTL_LOG" 2>&1; then
+  cat "$SYSCTL_LOG" >&2
+  rm -f "$SYSCTL_LOG"
+  die 'sysctl --system failed'
+fi
+if grep -qiE 'cannot stat|permission denied|invalid argument|unknown key|error:' "$SYSCTL_LOG"; then
+  cat "$SYSCTL_LOG" >&2
+  rm -f "$SYSCTL_LOG"
+  die 'one or more sysctl settings could not be applied'
+fi
+rm -f "$SYSCTL_LOG"
+ok 'sysctl profiles applied'
+
+log '[3/7] Configuring optional module blacklist'
+write_file /etc/modprobe.d/blacklist-obscure.conf <<'EOF'
+# Moriarty: prevents normal modprobe loading of rarely used protocols/filesystems.
+# This does not unload modules already in use or block built-in kernel features.
 install dccp /bin/false
 install sctp /bin/false
 install rds /bin/false
@@ -282,27 +431,13 @@ install squashfs /bin/false
 install udf /bin/false
 install vivid /bin/false
 EOF
-ok "modprobe applied (full effect after reboot)"
-echo -e "${B}[4/7] NetworkManager: identity per boot${N}"
-# NetworkManager already randomizes MACs at activation. Writing systemd.link
-# rules on top of it duplicated the job and made the effective policy depend
-# on which layer won, so only the NM profile remains. Remove the .link files
-# written by Moriarty 1.x if they are still around.
-run rm -f /etc/systemd/network/10-moriarty-random-mac.link \
-          /etc/systemd/network/11-moriarty-random-mac-wifi.link
-if ! command -v nmcli >/dev/null 2>&1; then
-  if [ "$DRY_RUN" -eq 1 ]; then
-    warn "NetworkManager not found; dry-run continues without nmcli"
-  else
-    fail "NetworkManager is required"
-  fi
-fi
-run mkdir -p /etc/NetworkManager/conf.d
-bup /etc/NetworkManager/conf.d/00-mac-ip-randomize.conf
-write_file /etc/NetworkManager/conf.d/00-mac-ip-randomize.conf << 'EOF'
+ok 'modprobe policy written (full effect may require reboot)'
+
+log '[4/7] Configuring NetworkManager identity policy'
+command -v nmcli >/dev/null 2>&1 || die 'NetworkManager (nmcli) is required'
+write_file /etc/NetworkManager/conf.d/00-mac-ip-randomize.conf <<'EOF'
 [connection]
-# Identity is stable inside a boot and rotates on reboot: ${BOOT} changes
-# every boot and the MAC, DHCP client-id and DUID are derived from it.
+# Stable during one boot; changes when NetworkManager creates a new boot ID.
 connection.stable-id=${CONNECTION}/${BOOT}
 ethernet.cloned-mac-address=stable
 wifi.cloned-mac-address=stable
@@ -312,40 +447,36 @@ ipv6.dhcp-send-hostname=false
 ipv6.dhcp-duid=ll
 ipv6.addr-gen-mode=stable-privacy
 EOF
-bup /etc/NetworkManager/conf.d/90-dns-none.conf
-printf '[main]\ndns=none\n' | write_file /etc/NetworkManager/conf.d/90-dns-none.conf
-run nmcli general reload 2>/dev/null || true
-if command -v nmcli >/dev/null 2>&1; then
-  if [ "$DRY_RUN" -eq 0 ]; then
-    : > "$BK/networkmanager-profiles.tsv" 2>/dev/null || true
+write_file /etc/NetworkManager/conf.d/90-dns-none.conf <<'EOF'
+[main]
+dns=none
+EOF
+
+# Profile values were saved before any changes, using UUIDs and base64 fields.
+while IFS=$'\t' read -r uuid type; do
+  [[ "$type" == '802-3-ethernet' || "$type" == '802-11-wireless' ]] || continue
+  [[ "$uuid" =~ ^[0-9a-fA-F-]{36}$ ]] || continue
+  if ! nmcli connection modify "$uuid" \
+      ipv4.ignore-auto-dns yes ipv6.ignore-auto-dns yes \
+      ipv4.dns '' ipv6.dns ''; then
+    warn "could not clear per-profile DNS settings for connection $uuid"
   fi
-  nmcli -t -f NAME,TYPE connection show 2>/dev/null | grep -E ':802-3-ethernet$|:802-11-wireless$' | cut -d: -f1 | while IFS= read -r c; do
-    if [ "$DRY_RUN" -eq 0 ]; then
-      values=$(nmcli -g ipv4.dns,ipv4.ignore-auto-dns,ipv6.dns,ipv6.ignore-auto-dns connection show "$c" 2>/dev/null || true)
-      printf '%s\f%s\n' "$c" "$values" >> "$BK/networkmanager-profiles.tsv" 2>/dev/null || true
-    fi
-    run nmcli connection modify "$c" ipv4.ignore-auto-dns yes ipv6.ignore-auto-dns yes ipv4.dns "" ipv6.dns "" 2>/dev/null || true
-  done
-fi
-ok "NetworkManager ready"
-echo -e "${B}[5/7] Encrypted DNS (dnscrypt-proxy)${N}"
-bup /etc/dnscrypt-proxy/dnscrypt-proxy.toml
-write_file /etc/dnscrypt-proxy/dnscrypt-proxy.toml << 'EOF'
+done < <(nmcli -t -f UUID,TYPE connection show)
+
+nmcli general reload || die 'NetworkManager could not reload its configuration'
+ok 'NetworkManager defaults and connection profiles updated'
+
+log '[5/7] Configuring encrypted DNS'
+write_file /etc/dnscrypt-proxy/dnscrypt-proxy.toml <<'EOF'
 listen_addresses = ['127.0.0.1:53']
 server_names = ['quad9-dnscrypt-ip4-nofilter-pri', 'dns.digitale-gesellschaft.ch']
-# server_names pins the providers actually used; require_* is only
-# enforced by dnscrypt-proxy when server_names is left empty, so keep the
-# list audited for DNSSEC and no-logging behavior.
+# The explicit server list is pinned and must be reviewed periodically.
 require_dnssec = true
 require_nolog = true
 require_nofilter = true
 cache = true
 cache_size = 4096
 cache_min_ttl = 2400
-# The resolver list is fetched before dnscrypt can answer anything, so it
-# needs a bootstrap resolver. Point it at Quad9 instead of Google's
-# hardcoded default and forbid falling back to the system resolver, which
-# by then is dnscrypt itself.
 bootstrap_resolvers = ['9.9.9.9:53', '149.112.112.112:53']
 ignore_system_dns = true
 [sources.public-resolvers]
@@ -354,105 +485,71 @@ cache_file = '/var/cache/dnscrypt-proxy/public-resolvers.md'
 minisign_key = 'RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3'
 refresh_delay = 72
 EOF
-# The packaged unit runs with DynamicUser= and CacheDirectory=dnscrypt-proxy,
-# so the cache directory is created and owned by systemd. Creating it here
-# as root, or chowning it to a dnscrypt user that does not exist, breaks it.
-bup /etc/resolv.conf
-printf '# Generated by dnscrypt-proxy\nnameserver 127.0.0.1\noptions edns0\n' | write_file /etc/resolv.conf
-if [ "$DRY_RUN" -eq 0 ]; then
-    : > "$BK/systemd-services.state" 2>/dev/null || true
-    for unit in dnscrypt-proxy.service dnscrypt-proxy.socket; do
-      state=$(systemctl is-enabled "$unit" 2>/dev/null || true)
-      printf '%s %s\n' "$unit" "$state" >> "$BK/systemd-services.state" 2>/dev/null || true
-    done
-  fi
 
-# The packaged .socket owns port 53 and ignores listen_addresses, so it
-# has to stay out of the way of the service that reads our config.
-if [ "$DRY_RUN" -eq 1 ]; then
-  printf '  [dry-run] systemctl disable --now dnscrypt-proxy.socket\n'
-else
-  systemctl disable --now dnscrypt-proxy.socket >/dev/null 2>&1 || true
-fi
-if [ "$DRY_RUN" -eq 0 ]; then
-  dnscrypt-proxy -check -config /etc/dnscrypt-proxy/dnscrypt-proxy.toml >/dev/null 2>&1 \
-    || fail "dnscrypt-proxy rejected /etc/dnscrypt-proxy/dnscrypt-proxy.toml"
-fi
-# enable --now is a no-op when the unit is already running, so an
-# existing install would keep the old config. Restart explicitly.
-run systemctl --quiet enable dnscrypt-proxy.service || fail "could not enable dnscrypt-proxy"
-run systemctl --quiet restart dnscrypt-proxy.service || fail "dnscrypt failed to restart"
-# first start may download the resolver list, so retry instead of a fixed wait
-if [ "$DRY_RUN" -eq 1 ]; then
-  ok "dry-run: skipping DNS wait"
-else
-  DNS_OK=""
-  for _ in {1..15}; do
-    sleep 2
-    [ -n "$(dig example.com @127.0.0.1 +short +time=2 +tries=1 2>/dev/null)" ] && { DNS_OK=1; break; }
-  done
-  [ -n "$DNS_OK" ] && ok "DNS resolves" || fail "DNS broken - run: systemctl status dnscrypt-proxy"
-fi
-echo -e "${B}[6/7] resolved dnscrypt-only + silent avahi + ufw${N}"
-run mkdir -p /etc/systemd/resolved.conf.d
-if [ -f /etc/systemd/resolved.conf.d/moriarty-dns.conf ]; then bup /etc/systemd/resolved.conf.d/moriarty-dns.conf; fi
-printf '[Resolve]\nDNS=127.0.0.1\nFallbackDNS=\nLLMNR=no\nMulticastDNS=no\nDNSSEC=no\n' | write_file /etc/systemd/resolved.conf.d/moriarty-dns.conf
-  # DNS points resolved's own clients at dnscrypt. libc clients that read /etc/resolv.conf directly bypass resolved.
-run systemctl restart systemd-resolved 2>/dev/null || true
-if [ -f /etc/avahi/avahi-daemon.conf ]; then
-  bup /etc/avahi/avahi-daemon.conf
-  run sed -i 's/^#*disable-publishing=.*/disable-publishing=yes/' /etc/avahi/avahi-daemon.conf || true
-  run systemctl restart avahi-daemon 2>/dev/null || true
-else
-  warn "avahi not installed - skipping"
-fi
-if [ -f /etc/ufw/sysctl.conf ]; then
-  bup /etc/ufw/sysctl.conf
-  # ufw loads this file after /etc/sysctl.d, so the values we care about
-  # have to be mirrored here or ufw silently wins.
-  if [ "$DRY_RUN" -eq 1 ]; then
-    printf '  [dry-run] would align /etc/ufw/sysctl.conf with 99-hardening.conf\n'
-  else
-    ufw_sysctl net/ipv4/conf/all/rp_filter 2
-    ufw_sysctl net/ipv4/conf/default/rp_filter 2
-    ufw_sysctl net/ipv4/conf/all/log_martians 1
-    ufw_sysctl net/ipv4/conf/default/log_martians 1
-  fi
-else
-  warn "ufw not installed - no active firewall"
-fi
-ok "resolved/avahi/ufw done"
-echo -e "${B}[7/7] Verification${N}"
-if [ "$DRY_RUN" -eq 1 ]; then
-  ok "dry-run: nothing to verify"
-else
-  echo "  sysctl: kptr=$(sysctl -n kernel.kptr_restrict 2>/dev/null) dmesg=$(sysctl -n kernel.dmesg_restrict 2>/dev/null) ptrace=$(sysctl -n kernel.yama.ptrace_scope 2>/dev/null) tempaddr=$(sysctl -n net.ipv6.conf.all.use_tempaddr 2>/dev/null)"
-  systemctl is-active --quiet dnscrypt-proxy && ok "dnscrypt-proxy active" \
-    || warn "dnscrypt-proxy is not active"
+dnscrypt-proxy -check -config /etc/dnscrypt-proxy/dnscrypt-proxy.toml >/dev/null || die 'dnscrypt-proxy rejected its configuration'
+systemctl disable --now dnscrypt-proxy.socket >/dev/null 2>&1 || warn 'could not disable dnscrypt-proxy.socket (it may not be installed)'
+systemctl enable dnscrypt-proxy.service || die 'could not enable dnscrypt-proxy.service'
+systemctl restart dnscrypt-proxy.service || die 'dnscrypt-proxy failed to start'
 
-  # Query the way glibc-based applications do. /etc/resolv.conf points
-  # directly at dnscrypt-proxy, so this check does not exercise
-  # systemd-resolved; the upstream check below covers that path.
-  if [ -n "$(dig +short +time=3 +tries=1 example.com 2>/dev/null)" ]; then
-    ok "system resolver answers"
-  else
-    warn "system resolver does not answer"
+DNS_OK=0
+for _ in {1..15}; do
+  if dig @127.0.0.1 example.com +short +time=2 +tries=1 2>/dev/null | grep -q .; then
+    DNS_OK=1
+    break
   fi
+  sleep 2
+done
+((DNS_OK == 1)) || die 'DNSCrypt did not answer on 127.0.0.1:53; resolver routing has not been changed'
+ok 'DNSCrypt answers locally'
 
-  # Any DNS server left in resolvectl that is not the local proxy is an
-  # upstream resolver the queries can leak to. Parse the field instead of
-  # matching a hardcoded list of addresses.
-  FOREIGN=""
-  if command -v resolvectl >/dev/null 2>&1; then
-    FOREIGN=$(resolvectl status 2>/dev/null \
-      | sed -n 's/.*DNS Servers: //p; s/.*Current DNS Server: //p' \
-      | tr ' ' '\n' | grep -vE '^(127\.0\.0\.1|::1|)$' || true)
-  fi
-  if [ -n "$FOREIGN" ]; then
-    warn "upstream resolvers still configured: $(echo "$FOREIGN" | tr '\n' ' ')"
-  else
-    ok "no upstream resolver configured"
-  fi
+# Switch the host resolver only after the encrypted resolver has passed a query.
+DNS_SWITCHED=1
+write_file /etc/systemd/resolved.conf.d/moriarty-dns.conf <<'EOF'
+[Resolve]
+DNS=127.0.0.1
+FallbackDNS=
+LLMNR=no
+MulticastDNS=no
+DNSSEC=no
+EOF
+systemctl try-restart systemd-resolved >/dev/null 2>&1 || warn 'systemd-resolved is not active; its configuration will apply when started'
+write_file /etc/resolv.conf <<'EOF'
+# Generated by Moriarty. Restore the saved backup to return to the prior resolver.
+nameserver 127.0.0.1
+options edns0
+EOF
+nmcli general reload || die 'NetworkManager failed to reload after DNS routing changed'
+
+log '[6/7] Configuring Avahi and UFW sysctl'
+set_avahi_publishing_off
+if [[ -f /etc/avahi/avahi-daemon.conf ]]; then
+  systemctl try-restart avahi-daemon >/dev/null 2>&1 || warn 'Avahi config saved, but avahi-daemon could not be restarted'
 fi
-echo ""
-echo -e "${B}COMPLETE - backup at $BK - reboot to activate the new identity${N}"
+if [[ -f /etc/ufw/sysctl.conf ]]; then
+  set_ufw_sysctl net/ipv4/conf/all/rp_filter 2
+  set_ufw_sysctl net/ipv4/conf/default/rp_filter 2
+  set_ufw_sysctl net/ipv4/conf/all/log_martians 1
+  set_ufw_sysctl net/ipv4/conf/default/log_martians 1
+  ok 'UFW sysctl values aligned'
+else
+  warn 'UFW sysctl file not found; no UFW firewall rules were installed or enabled'
+fi
+ok 'resolver, Avahi and optional UFW configuration processed'
+
+log '[7/7] Verifying effective configuration'
+systemctl is-active --quiet dnscrypt-proxy.service || die 'dnscrypt-proxy is not active'
+dig @127.0.0.1 example.com +time=3 +tries=1 +short | grep -q . || die 'DNSCrypt direct query failed'
+dig example.com +time=3 +tries=1 +short | grep -q . || die 'system resolver query failed'
+
+printf '  sysctl: kptr_restrict=%s dmesg_restrict=%s tempaddr=%s\n' \
+  "$(sysctl -n kernel.kptr_restrict 2>/dev/null || printf '?')" \
+  "$(sysctl -n kernel.dmesg_restrict 2>/dev/null || printf '?')" \
+  "$(sysctl -n net.ipv6.conf.all.use_tempaddr 2>/dev/null || printf '?')"
+ok 'DNSCrypt and the system resolver respond'
+
+DNS_SWITCHED=0
+printf '\n%sCOMPLETE%s\n' "$GREEN" "$RESET"
+printf 'Backup: %s\n' "$BACKUP_DIR"
+printf 'Restore: sudo ./moriarty-restore.sh %q\n' "$BACKUP_DIR"
+printf 'Note: packages installed by Moriarty are intentionally left installed by restore.\n'
+printf 'Note: module policy takes full effect after reboot.\n'
