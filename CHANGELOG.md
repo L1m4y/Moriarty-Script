@@ -1,43 +1,39 @@
 # Changelog
 
-## 2.0.0
+## 2.2.0
 
-This release corrects the claims made next to the code and removes
-behavior that could leave a machine without DNS.
+Security and reliability rework.
 
 ### Added
-
-- `moriarty-restore.sh`, driven by `MANIFEST` from the backup tree.
-- `--help`, `--version`, `--dry-run`, `--yes`, `--no-color`.
-- Validation of generated dnscrypt config via `dnscrypt-proxy --check`.
-- `99-performance.conf` for throughput settings, kept apart from hardening.
+- Per-key sysctl apply and verification with clear `applied`, `unsupported`,
+  `rejected`, and `mismatch` statuses.
+- `--profile balanced|strict`.
+- Component skips (`--skip-modules`, `--skip-network`, `--skip-dns`,
+  `--skip-avahi`, `--skip-ufw`).
+- `--check` audit mode.
+- `--force-profile-dns` and `--force-profile-identity`.
+- `--no-rollback`.
+- SHA-256 signed manifest (version 2) with v1 backward compatibility.
+- NetworkManager connection profiles and identity snapshot backup/restore.
+- Systemd service-state snapshot and restore.
+- Runtime sysctl-value restore.
+- Legacy configuration cleanup with automatic backup.
+- Resolver metadata verification using `dnscrypt-proxy -list`.
+- `make check`, `make test`, tests/run.sh, SECURITY.md and additional docs.
 
 ### Changed
+- Backup path is now timestamped plus a random suffix and stores META data.
+- Verification uses the system resolver path and reports foreign resolved DNS.
+- NetworkManager file renamed to `00-moriarty-identity.conf`; old files cleaned up.
+- Sysctl files renamed to `99-moriarty-hardening.conf` and
+  `99-moriarty-performance.conf`; old files cleaned up.
+- Module policy renamed to `99-moriarty-blacklist.conf`; old policy cleaned up.
+- Avahi and UFW handling remain clearly separate from firewall enrollment.
 
-- MAC/DHCP/IPv6 identity is handled once, by NetworkManager. The duplicated
-  `systemd.link` phase and its `.link` files were removed.
-- dnscrypt bootstrap uses Quad9 (`9.9.9.9`, `149.112.112.112`) and forbids system DNS fallback.
-- `warn_limit` removed from the sysctl profile; kernel panics now wait 30s.
-- `ufw/sysctl.conf` is aligned with the profile instead of being overridden by it.
-- Verification queries `/etc/resolv.conf` for real and reports every upstream
-  configured in `systemd-resolved`.
-- Failures restore `resolv.conf` and the NetworkManager DNS file instead of
-  leaving the machine resolver-less.
-- Backups preserve symlinks and abort on error.
-- README states measured counts and the actual GPL-3.0 license.
-
-### Removed
-
-- Redundant defaults already applied by the kernel or `systemd`
-  (`rp_filter`, `accept_source_route`, `protected_hardlinks/symlinks`,
-  `randomize_va_space`, `ptrace_scope`, `ip_forward`, built-in ICMP, etc.).
-- `tcp_tw_reuse`, `tcp_fastopen=server` and BBR-less performance tunables
-  removed from the security profile.
-- Unused `Moriarty-Logo.jpg`.
-- Nonexistent `dnscrypt` owner change in the apply script.
-
-### Known limits
-
-- Encrypted DNS hides the resolver, not the connection destination or SNI.
-- Kernel module bans block autoloading only.
-- Bootstrap still happens once in clear text.
+### Fixed
+- sysctl errors are no longer hidden.
+- NetworkManager profile DNS changes are now backed up and restored.
+- Manifest paths, ownership, mode and payload checksums are validated.
+- Restore path validation now rejects symlink escapes.
+- UFW sysctl alignment uses atomic writes.
+- `connection.stable-id` and other identity values survive clear DNS failures.

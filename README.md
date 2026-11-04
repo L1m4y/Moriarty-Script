@@ -1,115 +1,142 @@
-<br/>
+# Moriarty-Script
 
-<div align="center">
+One-shot privacy and host-hardening profile for Arch Linux and CachyOS derivatives.
 
-<img src="assets/Moriarty-Icon.png" alt="Moriarty" width="192"/>
-
-<h1>Moriarty</h1>
-
-**One-shot PRIVACY hardening for Arch Linux.**
-
-A single-command configuration profile: per-boot hardware identity, encrypted DNS and a tightened kernel.
-
-[![OS](https://img.shields.io/badge/OS-Arch_Linux-D42F3F?logo=archlinux&logoColor=E7E7DB)](https://archlinux.org)
-[![Shell](https://img.shields.io/badge/Shell-Bash-FF9700?logo=gnubash&logoColor=FFFFFF)](https://www.gnu.org/software/bash/)
-[![License](https://img.shields.io/badge/License-GPL_3.0-D42F3F?logo=open-source-initiative&logoColor=FFFFFF)](LICENSE)
-
-</div>
+Moriarty is **not** an anonymity tool. It rotates per-boot hardware identity, forces
+system DNS through a pinned encrypted resolver, tightens the kernel surface, and
+restores or verifies the result.
 
 ## What it does
 
-`moriarty.sh` runs 7 sequential phases:
+1. **Dependencies** – installs `dnscrypt-proxy` and `bind` (for `dig`) with pacman.
+2. **Sysctl hardening** – applies 30+ tunables and verifies each effective value.
+3. **Module policy** – blocks rarely used protocols/filesystems through
+   `install ... /bin/false`, with optional Live-ISO-safe profiles.
+4. **Per-boot identity** – NetworkManager derives MAC, DHCP client ID, DHCPv6 DUID,
+   and stable IPv6 privacy addresses from one `${CONNECTION}/${BOOT}` seed.
+5. **Encrypted DNS** – `dnscrypt-proxy` on `127.0.0.1:53`, verified before
+   routing is changed. NM's own DNS is disabled.
+6. **resolved / Avahi / UFW** – `systemd-resolved` forwards only to the proxy,
+   LLMNR/mDNS are disabled, Avahi publishing is off, UFW sysctl is aligned.
+7. **Verification** – sysctl values, service state, direct proxy queries, system
+   resolver queries, NSS resolution, and a written report.
 
-| # | Phase | Description |
-|:-:|-------|-------------|
-| 1 | **Dependencies** | Installs `dnscrypt-proxy` and `bind` (for `dig`) via pacman |
-| 2 | **Sysctl hardening** | 37 kernel/network tunables: hides kernel pointers and dmesg, ASLR, BPF and io_uring limits, redirect and martian controls, disabled SysRq, core dumps. Values already provided by the kernel or `systemd` (like `rp_filter=2` and `protected_{hardlinks,symlinks}`) are not repeated |
-| 3 | **Module blacklist** | Disables 27 obscure protocols and filesystems (`dccp`, `sctp`, `x25`, `atm`, `hfs`, `cramfs`, `squashfs`...) through `install ... /bin/false`. Built-in modules and manual `insmod` are not covered; `squashfs` is included, so Live ISO / install media will not mount unless the module is available |
-| 4 | **Identity per boot** | NetworkManager derives MAC, DHCP client-id, DHCPv6 DUID and IPv6 interface-ID from one per-boot `stable-id`: identity is stable while a boot lasts and rotates after every reboot. No hostname is sent over DHCP and IPv6 privacy extensions are enabled |
-| 5 | **Encrypted DNS** | `dnscrypt-proxy` on `127.0.0.1:53`, DNSSEC- and no-log-required, DNS-filtering disabled. NM's own DNS is switched off so queries cannot leak through it |
-| 6 | **resolved / avahi / ufw** | `systemd-resolved` is set to use dnscrypt for NSS/managed programs, but `/etc/resolv.conf` points directly at the proxy; LLMNR and mDNS off; Avahi publishing silenced; UFW is not enrolled by this script, its `sysctl` file is aligned because it otherwise overrides `/etc/sysctl.d` |
-| 7 | **Verification** | Kernel values, dnscrypt state, a real lookup through `/etc/resolv.conf`, and detection of any upstream DNS server still configured in `systemd-resolved` |
+Every change is recorded in a manifest and can be restored, including
+NetworkManager connection profiles and prior systemd service states.
 
-<details>
-<summary><b>Representative sysctl parameters</b></summary>
+## Requirements
 
-```text
-kernel.kptr_restrict = 2          kernel.dmesg_restrict = 1
-kernel.unprivileged_bpf_disabled = 1
-kernel.kexec_load_disabled = 1    kernel.sysrq = 0
-kernel.io_uring_disabled = 1      fs.suid_dumpable = 0
-kernel.oops_limit = 1             kernel.panic = 30
-fs.protected_fifos = 2           fs.protected_regular = 2
-net.ipv4.conf.all.log_martians = 1
-net.ipv4.conf.all.arp_ignore = 1   net.ipv4.conf.all.arp_announce = 2
-net.ipv6.conf.all.use_tempaddr = 2
-```
+- Arch Linux or a compatible derivative (`pacman`, `systemd`, `NetworkManager`)
+- Root privileges (`sudo`)
+- `dig` is provided by `bind`; phase 1 installs it if missing
 
-Full list in `moriarty.sh`.
-
-</details>
-
-<details>
-<summary><b>DNS resolvers used</b></summary>
-
-| Resolver | Operator | Notes |
-|----------|----------|-------|
-| `quad9-dnscrypt-ip4-nofilter-pri` | Quad9 | DNSSEC, no filtering, no-logging |
-| `dns.digitale-gesellschaft.ch` | Digital Society (CH) | DNSSEC, no-logging |
-| bootstrap: `9.9.9.9`, `149.112.112.112` | Quad9 | plaintext, only to fetch the resolver list |
-
-Requires DNSSEC and no logging; servers failing either check are rejected. The bootstrap query is sent in clear text because the resolver list has to be fetched before dnscrypt can answer.
-
-</details>
-
-## Usage
+## Quick use
 
 ```bash
 git clone https://github.com/L1m4y/Moriarty-Script.git
 cd Moriarty-Script
-sudo bash moriarty.sh            # apply
-sudo bash moriarty.sh --dry-run # show what would change first
+
+# review first
+sudo bash moriarty.sh --dry-run
+
+# apply with prompts
+sudo bash moriarty.sh
+
+# audit the current state without changing it
+sudo bash moriarty.sh --check
+
+# encrypted, non-interactive run
+sudo bash moriarty.sh --yes --profile strict
+
+# change only some components
+sudo bash moriarty.sh --skip-modules --skip-ufw
 ```
 
-Restore the files changed by an apply:
+Reboot after applying so the new MAC/DHCP identity and module policy take effect.
 
-```bash
-sudo ./moriarty-restore.sh /root/moriarty-backup.<timestamp>
-```
+## Profiles
 
-> [!IMPORTANT]
-> **Reboot after running** so the new identity (MAC, DHCP client-id) takes effect.
+| Profile | Extra sysctl / module behavior |
+| --- | --- |
+| `balanced` (default) | kptr/dmesg, BPF/io_uring limits, redirect/ARP hardening, privacy IPv6; block protocols and rare filesystems without `squashfs`/`udf` so Linux install media can still mount |
+| `strict` | Adds irreversible `kexec_load_disabled=1`, `panic_on_oops`-style oops limit, stricter perf policy, and blocks `squashfs`/`udf` |
 
-### Requirements
+Use `--profile strict` only when you understand the compatibility tradeoffs.
 
-- Arch Linux or a compatible derivative (`pacman`, `systemd`, `NetworkManager`)
-- Root privileges (`sudo`)
-- `dig` comes from the `bind` package, installed by phase 1 if missing
-
-### Script options
+## Options
 
 ```text
--h, --help                  Show help
--V, --version                Show version
--n, --dry-run                Print actions without changing the system
--y, --yes                    Skip the confirmation prompt
---no-color                  Disable colored output
+-h, --help
+-V, --version
+-n, --dry-run
+--check
+-y, --yes
+--profile balanced|strict
+--skip-modules --skip-network --skip-dns --skip-avahi --skip-ufw
+--force-profile-dns
+--force-profile-identity
+--no-rollback
+--no-color
 ```
 
-## Behavior & safety
+## Backup and restore
 
-- Every file overwritten is backed up first to `/root/moriarty-backup.<timestamp>/`, preserving its path inside `/etc`; the manifest drives `moriarty-restore.sh`.
-- If a phase fails after `/etc/resolv.conf` and the NetworkManager DNS file have been repointed at dnscrypt, both are restored before exit, so a failed run does not leave the machine without a working resolver.
-- dnscrypt configuration is validated with `dnscrypt-proxy --check` before the service is enabled; a broken config aborts instead of starting a dead proxy.
-- Verification queries the real system path (`/etc/resolv.conf`) and reports `systemd-resolved` upstreams different from `127.0.0.1` or `::1`, instead of scanning a hard-coded list of addresses.
-- Spare `systemd.link` rules created by older Moriarty versions are removed, so only the NetworkManager identity layer remains.
-- Settings persist across reboots. The MAC and DHCP identity change after every reboot; the assigned IP address is still chosen by the DHCP server.
-- UFW is not installed or enabled by this script: only its sysctl override file is aligned.
-- Verification is a functional check, not a security audit; successful DNS resolution does not prove that no traffic leaks outside the proxy.
+Apply creates a root-owned directory such as `/root/moriarty-backup.YYYYMMDD_HHMMSS.XXXXXX/`.
+It contains:
 
-> [!WARNING]
-> The script replaces system-wide DNS and network configuration. Review before running on managed systems, containers, VMs, static-IP deployments, or machines using 802.1X or captive portals. Encrypted DNS hides the resolver from the network, not the destination: the TCP connections and, in most cases, the HTTPS SNI remain visible. This is not an anonymity tool.
+- `MANIFEST` – allow-listed paths, `created` or `modified`, plus SHA-256 checksums
+- `META` – version, profile, timestamp, hostname, kernel
+- `report.txt` – per-setting status and summary
+- `sysctl-runtime.tsv`, `systemd-units.tsv`, `networkmanager-profiles.tsv`,
+  and `networkmanager-identity.tsv` – prior runtime and profile state
 
-<div align="center">
-<i>“He is the organiser of half that is evil and nearly all that is undetected.”</i>
-</div>
+Restore:
+
+```bash
+sudo ./moriarty-restore.sh --list
+sudo ./moriarty-restore.sh /root/moriarty-backup.20260...)
+# or
+sudo ./moriarty-restore.sh --yes --dry-run /root/moriarty-backup...
+```
+
+Restoration is pre-validated before changes and each file is replaced atomically.
+
+Installed packages are **not** removed by restore. Some kernel changes, such as
+`kexec_load_disabled=1`, cannot be reverted without reboot.
+
+## Architecture and limits
+
+Detailed DNS flow, NetworkManager identity behavior, sysctl policy, module policy,
+transaction behavior, and compatibility notes live in `docs/ARCHITECTURE.md` and
+`docs/COMPATIBILITY.md`.
+
+Important limits:
+
+- Encrypted DNS hides the resolver and query contents from on-path observers, but
+  destinations, connection timing, TLS SNI, and HTTP/2 HPACK are still visible.
+- Bootstrap DNS during startup is still plain DNS.
+- Per-boot identity only applies where NetworkManager is the resolver/network
+  authority; static IPs, VPN DNS, and 802.1X profiles may be skipped by default.
+- UFW is **not** installed or enabled by Moriarty. Only
+  `/etc/ufw/sysctl.conf` is aligned so UFW cannot override the profile.
+- Module bans stop normal `modprobe` loading. Built-in modules and direct
+  `insmod` are not covered.
+- `kexec_load_disabled=1` in strict mode cannot be reverted during the same boot.
+
+## Security
+
+See `SECURITY.md` for the threat model, assumptions, and reporting.
+
+## Tests and quality checks
+
+```bash
+make check
+make test
+```
+
+CI installs `shellcheck` and `shfmt` on Arch Linux and validates all scripts plus
+backup-manifest invariants. See `docs/TESTING.md`.
+
+## License
+
+GPL-3.0-or-later. See `LICENSE`.
