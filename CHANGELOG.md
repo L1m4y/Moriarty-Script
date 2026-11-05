@@ -48,7 +48,7 @@ Security and reliability rework.
 - Avahi and UFW handling remain clearly separate from firewall enrollment.
 
 ### Fixed
-- Test suite no longer depends on a local `/tmp/opencode` directory or on
+- Test suite no longer depends on a developer-local temporary directory or on
   `python3`; it uses a private temporary directory and `awk`, so the CI
   `tests` job passes on a clean `archlinux:latest` container.
 - sysctl errors are no longer hidden.
