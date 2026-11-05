@@ -21,6 +21,11 @@
   in the strict profile and modules loaded by Moriarty. `moriarty-restore.sh`
   now names an irreversible setting in its final warning.
 
+### Documentation
+- README now documents every CLI option for `moriarty.sh` and
+  `moriarty-restore.sh`: profiles, component skips, force flags,
+  `--no-rollback`, `--dry-run`, `--check`, and the restore options.
+
 ## 2.3.2
 
 ### Fixed

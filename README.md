@@ -88,13 +88,40 @@ sudo ./moriarty-restore.sh /root/moriarty-backup.<timestamp>
 
 ### Script options
 
-```text
--h, --help                  Show help
--V, --version                Show version
--n, --dry-run                Print actions without changing the system
--y, --yes                    Skip the confirmation prompt
---no-color                  Disable colored output
-```
+`moriarty.sh`:
+
+| Option | Description |
+|--------|-------------|
+| `--profile balanced` | Default: strong hardening with live-media compatibility |
+| `--profile strict` | Adds kexec/panic hardening and blocks `squashfs`/`udf` |
+| `--skip-modules` | Do not write the modprobe blacklist |
+| `--skip-network` | Do not change NetworkManager identity or profile DNS |
+| `--skip-dns` | Do not install or configure `dnscrypt-proxy`, `/etc/resolv.conf`, or the NetworkManager DNS drop-in |
+| `--skip-avahi` | Do not change Avahi publishing |
+| `--skip-ufw` | Do not align `/etc/ufw/sysctl.conf` |
+| `--force-profile-dns` | Also clear DNS on manual/static profiles |
+| `--force-profile-identity` | Set stable identity per profile, not only as defaults |
+| `--no-rollback` | Keep partial changes if a phase fails |
+| `-n`, `--dry-run` | Show planned operations without changing the system |
+| `--check` | Audit the current state without changing anything |
+| `-y`, `--yes` | Do not ask for confirmation |
+| `--no-color` | Disable colored output |
+| `-h`, `--help` | Show help and exit |
+| `-V`, `--version` | Show version and exit |
+
+`moriarty-restore.sh`:
+
+| Option | Description |
+|--------|-------------|
+| `-n`, `--dry-run` | Show what would be restored without writing |
+| `-l`, `--list` | List available backups |
+| `-y`, `--yes` | Skip the confirmation prompt |
+| `--no-color` | Disable colored output |
+| `-h`, `--help` | Show help and exit |
+| `-V`, `--version` | Show version and exit |
+
+Restore also accepts an optional backup directory; without one it selects the
+newest `/root/moriarty-backup.*`.
 
 ## Behavior & safety
 
