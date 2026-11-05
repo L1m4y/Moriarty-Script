@@ -23,7 +23,7 @@ A single-command configuration profile: per-boot hardware identity, encrypted DN
 | # | Phase | Description |
 |:-:|-------|-------------|
 | 1 | **Dependencies** | Installs `dnscrypt-proxy` and `bind` (for `dig`) via pacman |
-| 2 | **Sysctl hardening** | 37 kernel/network tunables: hides kernel pointers and dmesg, ASLR, BPF and io_uring limits, redirect and martian controls, disabled SysRq, core dumps. Values already provided by the kernel or `systemd` (like `rp_filter=2` and `protected_{hardlinks,symlinks}`) are not repeated |
+| 2 | **Sysctl hardening** | 43 kernel/network tunables: hides kernel pointers and dmesg, ASLR, BPF and io_uring limits, redirect and martian controls, disabled SysRq, core dumps. Values already provided by the kernel or `systemd` (like `rp_filter=2` and `protected_{hardlinks,symlinks}`) are not repeated |
 | 3 | **Module blacklist** | Disables 27 obscure protocols and filesystems (`dccp`, `sctp`, `x25`, `atm`, `hfs`, `cramfs`, `squashfs`...) through `install ... /bin/false`. Built-in modules and manual `insmod` are not covered; `squashfs` is included, so Live ISO / install media will not mount unless the module is available |
 | 4 | **Identity per boot** | NetworkManager derives MAC, DHCP client-id, DHCPv6 DUID and IPv6 interface-ID from one per-boot `stable-id`: identity is stable while a boot lasts and rotates after every reboot. No hostname is sent over DHCP and IPv6 privacy extensions are enabled |
 | 5 | **Encrypted DNS** | `dnscrypt-proxy` on `127.0.0.1:53`, DNSSEC- and no-log-required, DNS-filtering disabled. NM's own DNS is switched off so queries cannot leak through it |
@@ -35,7 +35,7 @@ A single-command configuration profile: per-boot hardware identity, encrypted DN
 
 ```text
 kernel.kptr_restrict = 2          kernel.dmesg_restrict = 1
-kernel.unprivileged_bpf_disabled = 1
+kernel.unprivileged_bpf_disabled = 2
 kernel.kexec_load_disabled = 1    kernel.sysrq = 0
 kernel.io_uring_disabled = 1      fs.suid_dumpable = 0
 kernel.oops_limit = 1             kernel.panic = 30

@@ -10,7 +10,7 @@ IFS=$'\n\t'
 export LC_ALL=C
 
 PROG=${0##*/}
-VERSION='2.3.2'
+VERSION='2.3.3'
 
 PROFILE='balanced'
 DRY_RUN=0
@@ -249,7 +249,8 @@ kernel.kptr_restrict = 2
 kernel.dmesg_restrict = 1
 kernel.printk = 3 3 3 3
 kernel.yama.ptrace_scope = 1
-kernel.unprivileged_bpf_disabled = 1
+# 2 blocks unprivileged BPF but stays reversible; 1 cannot be undone until reboot.
+kernel.unprivileged_bpf_disabled = 2
 kernel.io_uring_disabled = 1
 vm.mmap_rnd_bits = 32
 vm.mmap_rnd_compat_bits = 16
@@ -411,7 +412,14 @@ apply_sysctl_profile() {
         report_line 'mismatch' "$key expected '$expected', kernel reports '$actual'"
       fi
     else
-      record_status 'rejected' "$key = $expected was rejected by the kernel"
+      if [[ "$key" == 'kernel.unprivileged_bpf_disabled' && "$expected" == '2' && "$current" == '1' ]]; then
+        # 1 is locked until reboot: persist 2 so the next boot applies it.
+        warn "$key is 1 and cannot change until reboot; 2 will apply at the next boot"
+        report_line 'pending-reboot' "$key = $expected is scheduled for the next boot"
+        printf '%s = %s\n' "$key" "$expected" >>"$temporary"
+      else
+        record_status 'rejected' "$key = $expected was rejected by the kernel"
+      fi
       SYSCTL_REJECTED=$((SYSCTL_REJECTED + 1))
       if is_mandatory_sysctl "$key"; then
         SYSCTL_FAILURES=$((SYSCTL_FAILURES + 1))
@@ -470,10 +478,14 @@ load_and_verify_sysctl() {
         continue
       fi
       if [[ "$(normalize_ws "$actual")" != "$(normalize_ws "$expected")" ]]; then
-        record_status 'mismatch' "$key was overridden after sysctl --system (expected '$expected', got '$actual')"
-        SYSCTL_MISMATCH=$((SYSCTL_MISMATCH + 1))
-        if is_mandatory_sysctl "$key"; then
-          SYSCTL_FAILURES=$((SYSCTL_FAILURES + 1))
+        if [[ "$key" == 'kernel.unprivileged_bpf_disabled' && "$expected" == '2' && "$actual" == '1' ]]; then
+          report_line 'pending-reboot' "$key stays 1 until reboot; 2 applies on the next boot"
+        else
+          record_status 'mismatch' "$key was overridden after sysctl --system (expected '$expected', got '$actual')"
+          SYSCTL_MISMATCH=$((SYSCTL_MISMATCH + 1))
+          if is_mandatory_sysctl "$key"; then
+            SYSCTL_FAILURES=$((SYSCTL_FAILURES + 1))
+          fi
         fi
       else
         report_line 'applied' "$key = $expected"
@@ -689,22 +701,24 @@ modify_networkmanager_profiles() {
       report_line 'skipped' "802.1X profile $uuid left unchanged"
       continue
     fi
-    if [[ "$method4" == 'manual' || "$method6" == 'manual' ]]; then
-      if ((FORCE_PROFILE_DNS == 0)); then
-        warn "skipping static profile $uuid: use --force-profile-dns to clear its DNS"
-        report_line 'skipped' "static profile $uuid left unchanged"
+    if ! ((SKIP_DNS)); then
+      if [[ "$method4" == 'manual' || "$method6" == 'manual' ]]; then
+        if ((FORCE_PROFILE_DNS == 0)); then
+          warn "skipping static profile $uuid: use --force-profile-dns to clear its DNS"
+          report_line 'skipped' "static profile $uuid left unchanged"
+          continue
+        fi
+        warn "clearing static DNS on profile $uuid because --force-profile-dns was used"
+      fi
+      if ! nmcli connection modify "$uuid" \
+        ipv4.ignore-auto-dns yes ipv6.ignore-auto-dns yes; then
+        warn "could not set ignore-auto-dns on profile $uuid"
         continue
       fi
-      warn "clearing static DNS on profile $uuid because --force-profile-dns was used"
-    fi
-    if ! nmcli connection modify "$uuid" \
-      ipv4.ignore-auto-dns yes ipv6.ignore-auto-dns yes; then
-      warn "could not set ignore-auto-dns on profile $uuid"
-      continue
-    fi
-    if [[ "$method4" != 'manual' && "$method6" != 'manual' ]] || ((FORCE_PROFILE_DNS)); then
-      if ! nmcli connection modify "$uuid" ipv4.dns '' ipv6.dns ''; then
-        warn "could not clear per-profile DNS on $uuid"
+      if [[ "$method4" != 'manual' && "$method6" != 'manual' ]] || ((FORCE_PROFILE_DNS)); then
+        if ! nmcli connection modify "$uuid" ipv4.dns '' ipv6.dns ''; then
+          warn "could not clear per-profile DNS on $uuid"
+        fi
       fi
     fi
     type=$(LC_ALL=C nmcli -g connection.type connection show "$uuid" 2>/dev/null || true)
@@ -804,21 +818,23 @@ verify_networkmanager() {
       record_status 'mismatch' 'NetworkManager merged configuration does not show stable-id'
     fi
   fi
-  listing=$(LC_ALL=C nmcli -t -f UUID,TYPE connection show 2>/dev/null || true)
-  while IFS=: read -r uuid type; do
-    [[ "$type" == '802-3-ethernet' || "$type" == '802-11-wireless' ]] || continue
-    [[ "$uuid" =~ ^[0-9a-fA-F-]{36}$ ]] || continue
-    method4=$(nm_value "$uuid" ipv4.method)
-    dns4=$(nm_value "$uuid" ipv4.dns)
-    ignore4=$(nm_value "$uuid" ipv4.ignore-auto-dns)
-    if [[ "$method4" != 'manual' && -n "$dns4" ]]; then
-      record_status 'mismatch' "profile $uuid still carries DNS '$dns4'"
-    elif [[ "$ignore4" != 'yes' ]]; then
-      report_line 'pending' "profile $uuid does not set ipv4.ignore-auto-dns=yes"
-    else
-      report_line 'applied' "profile $uuid has profile DNS disabled"
-    fi
-  done <<<"$listing"
+  if ! ((SKIP_DNS)); then
+    listing=$(LC_ALL=C nmcli -t -f UUID,TYPE connection show 2>/dev/null || true)
+    while IFS=: read -r uuid type; do
+      [[ "$type" == '802-3-ethernet' || "$type" == '802-11-wireless' ]] || continue
+      [[ "$uuid" =~ ^[0-9a-fA-F-]{36}$ ]] || continue
+      method4=$(nm_value "$uuid" ipv4.method)
+      dns4=$(nm_value "$uuid" ipv4.dns)
+      ignore4=$(nm_value "$uuid" ipv4.ignore-auto-dns)
+      if [[ "$method4" != 'manual' && -n "$dns4" ]]; then
+        record_status 'mismatch' "profile $uuid still carries DNS '$dns4'"
+      elif [[ "$ignore4" != 'yes' ]]; then
+        report_line 'pending' "profile $uuid does not set ipv4.ignore-auto-dns=yes"
+      else
+        report_line 'applied' "profile $uuid has profile DNS disabled"
+      fi
+    done <<<"$listing"
+  fi
   report_line 'pending-reboot' 'cloned MAC, DHCP client-id and IPv6 identity rotate after reboot'
 }
 
@@ -1280,7 +1296,8 @@ dry_run_plan() {
 }
 
 run_check() {
-  local candidate performance
+  local candidate performance path
+  local -a paths=()
   candidate=$(mktemp /tmp/moriarty-check-sysctl.XXXXXX)
   performance=$(mktemp /tmp/moriarty-check-performance.XXXXXX)
   REPORT_FILE=$(mktemp /tmp/moriarty-check-report.XXXXXX)
@@ -1291,24 +1308,32 @@ run_check() {
   check_sysctl_candidate "$candidate"
 
   report_section 'files'
-  for path in \
-    /etc/sysctl.d/99-moriarty-hardening.conf \
-    /etc/sysctl.d/99-moriarty-performance.conf \
-    /etc/modprobe.d/99-moriarty-blacklist.conf \
-    /etc/NetworkManager/conf.d/00-moriarty-identity.conf \
-    /etc/NetworkManager/conf.d/90-dns-none.conf \
-    /etc/dnscrypt-proxy/dnscrypt-proxy.toml \
-    /etc/systemd/resolved.conf.d/99-moriarty-dns.conf; do
+  paths=(
+    /etc/sysctl.d/99-moriarty-hardening.conf
+    /etc/sysctl.d/99-moriarty-performance.conf
+    /etc/modprobe.d/99-moriarty-blacklist.conf
+    /etc/NetworkManager/conf.d/00-moriarty-identity.conf
+  )
+  if ! ((SKIP_DNS)); then
+    paths+=(
+      /etc/NetworkManager/conf.d/90-dns-none.conf
+      /etc/dnscrypt-proxy/dnscrypt-proxy.toml
+      /etc/systemd/resolved.conf.d/99-moriarty-dns.conf
+    )
+  fi
+  for path in "${paths[@]}"; do
     if [[ -f "$path" ]]; then
       report_line 'applied' "$path exists"
     else
       report_line 'missing' "$path is missing"
     fi
   done
-  if grep -Eq '^[[:space:]]*nameserver[[:space:]]+127\.0\.0\.1$' /etc/resolv.conf 2>/dev/null; then
-    report_line 'applied' '/etc/resolv.conf points to 127.0.0.1'
-  else
-    record_status 'mismatch' '/etc/resolv.conf does not point to 127.0.0.1'
+  if ! ((SKIP_DNS)); then
+    if grep -Eq '^[[:space:]]*nameserver[[:space:]]+127\.0\.0\.1$' /etc/resolv.conf 2>/dev/null; then
+      report_line 'applied' '/etc/resolv.conf points to 127.0.0.1'
+    else
+      record_status 'mismatch' '/etc/resolv.conf does not point to 127.0.0.1'
+    fi
   fi
 
   if ! ((SKIP_NETWORK)); then
@@ -1433,7 +1458,7 @@ main() {
 
   install -d -m 0755 /run/lock
   exec 9>"$LOCK_FILE"
-  flock -n 9 || die 'another Moriarty process is already running'
+  flock -n 9 || die 'another Moriarty process (apply or restore) is already running'
 
   create_backup_dir
   section "Moriarty $VERSION (profile: $PROFILE)"
@@ -1442,6 +1467,9 @@ main() {
   candidate="$BACKUP_DIR/sysctl-candidate.conf"
   performance="$BACKUP_DIR/performance-candidate.conf"
   build_sysctl_candidate "$candidate"
+  # ensure_bbr_module can write /etc/modules-load.d, so the transaction starts
+  # before it runs; otherwise a later failure would leave that file behind.
+  CHANGES_STARTED=1
   ensure_bbr_module || true
   build_performance_candidate "$performance"
 
@@ -1463,7 +1491,6 @@ main() {
     ok 'dnscrypt-proxy and bind are installed'
   fi
 
-  CHANGES_STARTED=1
   report_section 'environment'
   report_line 'info' "version=$VERSION profile=$PROFILE kernel=$(uname -r)"
   report_line 'info' "backup=$BACKUP_DIR"
@@ -1506,10 +1533,14 @@ ipv6.dhcp-duid=ll
 ipv6.addr-gen-mode=stable-privacy
 ipv6.ip6-privacy=2
 EOF
-    write_file /etc/NetworkManager/conf.d/90-dns-none.conf <<'EOF'
+    if ! ((SKIP_DNS)); then
+      write_file /etc/NetworkManager/conf.d/90-dns-none.conf <<'EOF'
 [main]
 dns=none
 EOF
+    elif [[ -f /etc/NetworkManager/conf.d/90-dns-none.conf ]]; then
+      warn 'DNS phase skipped; 90-dns-none.conf from a previous run is still in place'
+    fi
     modify_networkmanager_profiles
     nmcli general reload || die 'NetworkManager could not reload its configuration'
     verify_networkmanager

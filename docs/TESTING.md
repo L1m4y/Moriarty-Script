@@ -50,6 +50,8 @@ says **pending** and must not be read as a passing result.
 | I10 | BBR | Kernel with `tcp_bbr` as a module | module loads, `bbr` is active, `/etc/modules-load.d/99-moriarty-bbr.conf` exists, survives reboot | pending |
 | I11 | Avahi | Avahi installed and enabled | config accepted, service and socket active, `disable-publishing` in `[publish]` only | pending |
 | I12 | Identity rotation | Two reboots on the same network | MAC and DHCP identifiers change across boots, stable within a boot | pending |
+| I13 | `--skip-dns` | Applied system or clean install | `90-dns-none.conf` is not written, per-profile DNS and `resolv.conf` stay untouched, and a previous drop-in triggers a warning | pending |
+| I14 | Concurrent apply and restore | Two terminals | The second process exits on the shared lock; no interleaved writes | pending |
 
 ## How to record evidence
 

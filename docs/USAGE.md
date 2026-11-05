@@ -55,22 +55,30 @@ drop-in exists for programs and services that use `resolve` in `nsswitch.conf`.
 
 Use component flags when required by the deployment:
 
-- `--skip-modules`
-- `--skip-network`
-- `--skip-dns`
-- `--skip-avahi`
-- `--skip-ufw`
+- `--skip-modules`: leaves the modprobe policy untouched.
+- `--skip-network`: leaves NetworkManager identity and profile settings untouched.
+- `--skip-dns`: does not install `dnscrypt-proxy`/`bind`, does not write the
+  `90-dns-none.conf` drop-in, and does not touch per-profile DNS or
+  `/etc/resolv.conf`. If a previous run installed these files, they stay in
+  place and the script warns about it.
+- `--skip-avahi`: leaves Avahi publishing untouched.
+- `--skip-ufw`: leaves the UFW sysctl file untouched.
 
 ## Restore
 
 ```bash
-ls -lt /root | grep opsec-backup || true
+ls -lt /root | grep moriarty-backup || true
 sudo ./moriarty-restore.sh --list
 sudo ./moriarty-restore.sh --yes /root/moriarty-backup.20260...
 ```
 
 Use `--dry-run` with restore to inspect a manifest before changing anything.
 Restored service states come from `systemd-units.tsv`.
+
+Restore cannot undo every kernel value in the same boot. In particular,
+`kernel.kexec_load_disabled=1` (strict profile) stays set until the next reboot,
+and modules loaded by Moriarty remain loaded. The full table is in
+[THREAT-MODEL.md](THREAT-MODEL.md#reversibility).
 
 ## Uninstalling manually
 

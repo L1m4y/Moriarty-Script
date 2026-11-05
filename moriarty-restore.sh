@@ -11,13 +11,14 @@ IFS=$'\n\t'
 export LC_ALL=C
 
 PROG=${0##*/}
-VERSION='2.3.2'
+VERSION='2.3.3'
 
 DRY_RUN=0
 ASSUME_YES=0
 LIST_ONLY=0
 USE_COLOR=1
 BACKUP_DIR=''
+LOCK_FILE='/run/lock/moriarty.lock'
 
 if [[ -t 1 && -z ${NO_COLOR:-} ]]; then
   RED=$'\033[0;31m'
@@ -272,9 +273,9 @@ main() {
   # Lock the restore process like the apply process.
   if ((DRY_RUN == 0)); then
     install -d -m 0755 /run/lock
-    exec 9>/run/lock/.moriarty-restore.lock 2>/dev/null ||
-      die 'cannot open the restore lock file'
-    flock -n 9 || die 'another Moriarty restore is already running'
+    exec 9>"$LOCK_FILE" 2>/dev/null ||
+      die 'cannot open the Moriarty lock file'
+    flock -n 9 || die 'another Moriarty process (apply or restore) is already running'
   fi
 
   log 'Restoring managed files:'
@@ -332,7 +333,7 @@ main() {
   log ''
   log 'Restore process finished.'
   log 'Review warnings above. Packages installed by Moriarty are intentionally not removed.'
-  log 'Some kernel settings cannot be reversed during the same boot; reboot if needed.'
+  log 'Some kernel settings cannot be reversed during the same boot (for example kernel.kexec_load_disabled); reboot to clear them.'
 }
 
 restore_networkmanager_profiles() {

@@ -1,5 +1,26 @@
 # Changelog
 
+## 2.3.3
+
+### Fixed
+- `--skip-dns` no longer writes `90-dns-none.conf`, clears per-profile DNS, or
+  verifies the resolver path. The NetworkManager drop-in is only written when
+  the DNS phase is enabled, and a leftover drop-in from a previous run is
+  reported instead of silently kept.
+- The transaction now starts before loading `tcp_bbr` and writing
+  `/etc/modules-load.d/99-moriarty-bbr.conf`, so a failure in the dependency
+  phase rolls those changes back instead of leaving them behind.
+- Apply and restore share `/run/lock/moriarty.lock`, so the two operations can
+  no longer run at the same time.
+- `kernel.unprivileged_bpf_disabled` is set to `2` instead of `1`: unprivileged
+  BPF stays disabled, but the value can be reverted without a reboot, which
+  keeps restore meaningful. A host that already has `1` (set by 2.3.2) cannot
+  change it until reboot; the run persists `2`, reports it as `pending-reboot`,
+  and the next boot applies it.
+- Documented reversibility per change, including `kernel.kexec_load_disabled`
+  in the strict profile and modules loaded by Moriarty. `moriarty-restore.sh`
+  now names an irreversible setting in its final warning.
+
 ## 2.3.2
 
 ### Fixed
