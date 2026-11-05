@@ -30,8 +30,10 @@ ipv6.addr-gen-mode=stable-privacy
 ipv6.ip6-privacy=2
 ```
 
-Global defaults apply to profiles without explicit values. `--force-profile-identity`
-sets these values on every Ethernet/Wi-Fi profile and backs up the previous values.
+Global defaults are consulted by properties that have a `default` sentinel
+(for example `cloned-mac-address`). `--force-profile-identity` writes these
+values explicitly into every Ethernet/Wi-Fi profile and backs up the previous
+values, which is the reliable option for profiles that already exist.
 
 ## Backups and restoration
 

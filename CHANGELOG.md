@@ -17,6 +17,14 @@
 - The sysctl summary now counts and verifies the performance profile too, so a
   performance mismatch is no longer silently ignored.
 
+### Documentation
+- Add `docs/THREAT-MODEL.md`: per-component matrix of what each feature
+  protects against, from which actor, and under which conditions, including an
+  explicit privacy-versus-security section.
+- Expand `docs/TESTING.md` with the integration matrix that still has to be run
+  on real hardware, the current CI gaps, and an evidence collection protocol.
+  Pending rows are marked as such, not as passing results.
+
 ## 2.3.1
 
 Security and reliability rework.

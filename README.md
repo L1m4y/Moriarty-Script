@@ -110,6 +110,15 @@ sudo ./moriarty-restore.sh /root/moriarty-backup.<timestamp>
 > [!WARNING]
 > The script replaces system-wide DNS and network configuration. Review before running on managed systems, containers, VMs, static-IP deployments, or machines using 802.1X or captive portals. Encrypted DNS hides the resolver from the network, not the destination: the TCP connections and, in most cases, the HTTPS SNI remain visible. This is not an anonymity tool.
 
+## Security model and testing
+
+Host hardening and network privacy are separate goals, and neither is a promise
+of anonymity. [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md) lists, for every
+component, what it protects against, from which actor, and under which
+conditions. [`docs/TESTING.md`](docs/TESTING.md) separates what CI actually
+covers from the integration scenarios that still need to be run on real
+hardware; do not read the pending matrix as passing results.
+
 <div align="center">
 <i>“He is the organiser of half that is evil and nearly all that is undetected.”</i>
 </div>

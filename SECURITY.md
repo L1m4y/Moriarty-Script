@@ -16,6 +16,11 @@ defaults, profile DNS, and resolver routing. It stores backups and reports under
 - Does not cover already loaded kernel modules, built-in modules, or privileged
   `insmod`.
 
+The full component-by-component matrix, including what each feature does not
+protect against and the conditions it depends on, is in
+[docs/THREAT-MODEL.md](docs/THREAT-MODEL.md). Integration coverage and its
+current gaps are documented in [docs/TESTING.md](docs/TESTING.md).
+
 ## Reporting vulnerabilities
 
 Do not place exploit details in public issues. Use GitHub private vulnerability
