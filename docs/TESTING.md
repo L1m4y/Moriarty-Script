@@ -9,8 +9,11 @@ make test        # tests/run.sh
 
 `tests/run.sh` validates CLI behavior, and — when run as root — creates
 synthetic v2 backups to check manifest checksums, ownership, permissions,
-path allow-listing, and symlink rejection. It uses a private temporary
-directory and has no dependency beyond bash, coreutils, `awk`, and `util-linux`.
+path allow-listing, and symlink rejection. It also asserts structural
+invariants: apply and restore share the same lock file, `CHANGES_STARTED` is set
+before `ensure_bbr_module`, resolver metadata verification fails closed, and
+`--dry-run --skip-dns` reports the skip. It uses a private temporary directory
+and has no dependency beyond bash, coreutils, `awk`, and `util-linux`.
 
 CI runs two jobs: shellcheck/shfmt on Ubuntu, and `tests/run.sh` as root inside
 an `archlinux:latest` container.
@@ -23,8 +26,9 @@ an `archlinux:latest` container.
   files) is never exercised.
 - Restore tests are always `--dry-run`. No test copies files back or takes the
   restore lock.
-- There is no coverage of `--check`, `--profile`, `--force-profile-*`,
-  `--skip-*`, or `--no-rollback`.
+- There is no coverage of `--profile`, `--force-profile-*`, `--no-rollback`, or
+  the runtime effects of `--skip-*`; those flags are only checked through
+  `--dry-run` output.
 - Nothing is tested against real hardware, Wi-Fi, IPv6, 802.1X, or a reboot.
 
 CI proves that the code is syntactically valid and that the manifest validation
@@ -52,6 +56,8 @@ says **pending** and must not be read as a passing result.
 | I12 | Identity rotation | Two reboots on the same network | MAC and DHCP identifiers change across boots, stable within a boot | pending |
 | I13 | `--skip-dns` | Applied system or clean install | `90-dns-none.conf` is not written, per-profile DNS and `resolv.conf` stay untouched, and a previous drop-in triggers a warning | pending |
 | I14 | Concurrent apply and restore | Two terminals | The second process exits on the shared lock; no interleaved writes | pending |
+| I15 | Resolver metadata failure | Block `dnscrypt-proxy -list` or make it exceed 30 s | the run aborts and rolls back instead of switching to unverified resolvers | pending |
+| I16 | BPF migration from 2.3.2 | Host with `kernel.unprivileged_bpf_disabled=1` | run reports `pending-reboot`, persists `2`, and after one reboot `sysctl -n` returns `2` and `0` is accepted | pending |
 
 ## How to record evidence
 

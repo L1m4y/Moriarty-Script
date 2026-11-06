@@ -10,7 +10,7 @@ IFS=$'\n\t'
 export LC_ALL=C
 
 PROG=${0##*/}
-VERSION='2.3.3'
+VERSION='2.3.4'
 
 PROFILE='balanced'
 DRY_RUN=0
@@ -36,6 +36,7 @@ SYSCTL_APPLIED=0
 SYSCTL_UNSUPPORTED=0
 SYSCTL_REJECTED=0
 SYSCTL_MISMATCH=0
+SYSCTL_PENDING_REBOOT=0
 SYSCTL_FAILURES=0
 WARNINGS=0
 
@@ -416,6 +417,7 @@ apply_sysctl_profile() {
         # 1 is locked until reboot: persist 2 so the next boot applies it.
         warn "$key is 1 and cannot change until reboot; 2 will apply at the next boot"
         report_line 'pending-reboot' "$key = $expected is scheduled for the next boot"
+        SYSCTL_PENDING_REBOOT=$((SYSCTL_PENDING_REBOOT + 1))
         printf '%s = %s\n' "$key" "$expected" >>"$temporary"
       else
         record_status 'rejected' "$key = $expected was rejected by the kernel"
@@ -480,6 +482,7 @@ load_and_verify_sysctl() {
       if [[ "$(normalize_ws "$actual")" != "$(normalize_ws "$expected")" ]]; then
         if [[ "$key" == 'kernel.unprivileged_bpf_disabled' && "$expected" == '2' && "$actual" == '1' ]]; then
           report_line 'pending-reboot' "$key stays 1 until reboot; 2 applies on the next boot"
+          SYSCTL_PENDING_REBOOT=$((SYSCTL_PENDING_REBOOT + 1))
         else
           record_status 'mismatch' "$key was overridden after sysctl --system (expected '$expected', got '$actual')"
           SYSCTL_MISMATCH=$((SYSCTL_MISMATCH + 1))
@@ -882,21 +885,13 @@ EOF
 verify_resolver_metadata() {
   local config=/etc/dnscrypt-proxy/dnscrypt-proxy.toml
   local temporary list name failed=0
-  [[ -f "$config" ]] || {
-    record_status 'missing' "$config is missing"
-    return 0
-  }
-  command -v timeout >/dev/null 2>&1 || {
-    warn 'timeout is unavailable; cannot verify resolver metadata'
-    return 0
-  }
+  [[ -f "$config" ]] || die "$config is missing"
+  command -v timeout >/dev/null 2>&1 || die 'timeout is required to verify resolver metadata'
   temporary=$(mktemp /tmp/moriarty-resolvers.XXXXXX)
   sed '/^[[:space:]]*server_names[[:space:]]*=/d' "$config" >"$temporary"
   if ! list=$(timeout 30 dnscrypt-proxy -list -config "$temporary" 2>/dev/null); then
-    warn 'could not enumerate filtered resolvers; metadata check skipped'
-    report_line 'warning' 'resolver metadata could not be verified'
     rm -f -- "$temporary"
-    return 0
+    die 'could not enumerate resolver metadata; refusing to continue without verifying the DNSSEC/no-log filters'
   fi
   report_section 'resolver metadata'
   for name in quad9-dnscrypt-ip4-nofilter-pri dns.digitale-gesellschaft.ch; do
@@ -1278,19 +1273,27 @@ print_summary() {
   printf '  sysctl unsupported: %s\n' "$SYSCTL_UNSUPPORTED"
   printf '  sysctl rejected:    %s\n' "$SYSCTL_REJECTED"
   printf '  sysctl mismatch:    %s\n' "$SYSCTL_MISMATCH"
+  printf '  sysctl next boot:   %s\n' "$SYSCTL_PENDING_REBOOT"
   printf '  warnings:           %s\n' "$WARNINGS"
 }
 
 dry_run_plan() {
+  local dns='' modules='' network='' avahi='' ufw=''
+  ((SKIP_DNS)) && dns=' (skipped by --skip-dns)'
+  ((SKIP_MODULES)) && modules=' (skipped by --skip-modules)'
+  ((SKIP_NETWORK)) && network=' (skipped by --skip-network)'
+  ((SKIP_AVAHI)) && avahi=' (skipped by --skip-avahi)'
+  ((SKIP_UFW)) && ufw=' (skipped by --skip-ufw)'
+
   section "Moriarty $VERSION dry-run (profile: $PROFILE)"
   log 'The following components would be processed:'
-  log '  [1/7] dependencies: dnscrypt-proxy + bind (unless --skip-dns)'
+  log "  [1/7] dependencies: dnscrypt-proxy + bind${dns}"
   log '  [2/7] sysctl: apply and verify per-key hardening + performance profiles'
-  log '  [3/7] modules: modprobe install /bin/false policy (unless --skip-modules)'
-  log '  [4/7] NetworkManager: stable per-boot identity and profile DNS policy'
-  log '  [5/7] DNS: dnscrypt-proxy on 127.0.0.1:53, metadata check, resolver switch'
-  log '  [6/7] resolved/Avahi/UFW: drop-in, publishing, optional sysctl alignment'
-  log '  [7/7] verification: sysctl values, resolver paths, NSS and report'
+  log "  [3/7] modules: modprobe install /bin/false policy${modules}"
+  log "  [4/7] NetworkManager: stable per-boot identity and profile DNS policy${network}"
+  log "  [5/7] DNS: dnscrypt-proxy on 127.0.0.1:53, metadata check, resolver switch${dns}"
+  log "  [6/7] resolved/Avahi/UFW: drop-in, publishing, optional sysctl alignment${dns}${avahi}${ufw}"
+  log "  [7/7] verification: sysctl values, resolver paths, NSS and report${dns}"
   log ''
   log 'No changes were made.'
 }

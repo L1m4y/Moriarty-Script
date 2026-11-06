@@ -59,6 +59,48 @@ pass 'dry-run exits 0'
 assert_exit 1 "$PROG_DIR/moriarty.sh" --bogus-option
 pass 'unknown option exits 1'
 
+# dry-run must reflect component skips instead of advertising disabled phases.
+"$PROG_DIR/moriarty.sh" --dry-run --yes --no-color --skip-dns \
+  >"$WORK_DIR/dry-skip-dns.out" 2>&1 || true
+if grep -q 'skipped by --skip-dns' "$WORK_DIR/dry-skip-dns.out" &&
+  ! grep -q '90-dns-none' "$WORK_DIR/dry-skip-dns.out"; then
+  pass 'dry-run reports --skip-dns'
+else
+  fail 'dry-run reports --skip-dns'
+fi
+
+# Apply and restore must share one lock.
+apply_lock=$(grep -m1 '^LOCK_FILE=' "$PROG_DIR/moriarty.sh" | cut -d= -f2-)
+restore_lock=$(grep -m1 '^LOCK_FILE=' "$PROG_DIR/moriarty-restore.sh" | cut -d= -f2-)
+if [[ -n "$apply_lock" && "$apply_lock" == "$restore_lock" ]]; then
+  pass 'apply and restore share the same lock file'
+else
+  fail 'apply and restore share the same lock file'
+fi
+
+# The transaction must start before BBR writes its persistent file.
+bbr_line=$(grep -n 'ensure_bbr_module || true' "$PROG_DIR/moriarty.sh" | tail -1 | cut -d: -f1)
+tx_line=$(grep -n 'CHANGES_STARTED=1' "$PROG_DIR/moriarty.sh" | head -1 | cut -d: -f1)
+if [[ -n "$bbr_line" && -n "$tx_line" && "$tx_line" -lt "$bbr_line" ]]; then
+  pass 'transaction starts before ensure_bbr_module'
+else
+  fail 'transaction starts before ensure_bbr_module'
+fi
+
+# Resolver metadata verification must fail closed.
+resolver_fn=$(awk '
+  /^verify_resolver_metadata\(\) \{/ { capture = 1 }
+  capture { print }
+  capture && /^\}$/ { exit }
+' "$PROG_DIR/moriarty.sh")
+if grep -Fq 'metadata check skipped' <<<"$resolver_fn"; then
+  fail 'resolver metadata verification fails closed'
+elif ! grep -Fq 'die '"'"'could not enumerate resolver metadata' <<<"$resolver_fn"; then
+  fail 'resolver metadata verification fails closed'
+else
+  pass 'resolver metadata verification fails closed'
+fi
+
 assert_exit 0 "$PROG_DIR/moriarty-restore.sh" --help
 pass 'restore help exits 0'
 assert_exit 0 "$PROG_DIR/moriarty-restore.sh" --list

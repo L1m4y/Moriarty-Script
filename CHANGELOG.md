@@ -1,5 +1,25 @@
 # Changelog
 
+## 2.3.4
+
+### Fixed
+- Resolver metadata verification now fails closed. If `dnscrypt-proxy -list`
+  fails or exceeds the 30-second timeout, the run aborts instead of continuing
+  with unverified resolvers. A missing config or a missing `timeout` command is
+  also fatal. This matches the documented DNSSEC/no-log requirement; there is
+  no offline fallback because the project does not keep a separately validated
+  signed cache.
+
+### Changed
+- `--dry-run` now marks each phase as skipped when the matching `--skip-*`
+  flag is used, instead of describing work that would not run.
+
+### Tests
+- `tests/run.sh` now asserts that apply and restore share the same lock file,
+  that the transaction starts before `ensure_bbr_module`, that resolver
+  metadata verification fails closed, and that `--dry-run --skip-dns` reports
+  the skip.
+
 ## 2.3.3
 
 ### Fixed

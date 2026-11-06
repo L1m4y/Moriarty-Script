@@ -128,6 +128,7 @@ newest `/root/moriarty-backup.*`.
 - Every file overwritten is backed up first to `/root/moriarty-backup.<timestamp>/`, preserving its path inside `/etc`; the manifest drives `moriarty-restore.sh`.
 - If a phase fails after `/etc/resolv.conf` and the NetworkManager DNS file have been repointed at dnscrypt, both are restored before exit, so a failed run does not leave the machine without a working resolver.
 - dnscrypt configuration is validated with `dnscrypt-proxy --check` before the service is enabled; a broken config aborts instead of starting a dead proxy.
+- Resolver metadata is verified before switching the resolver. If `dnscrypt-proxy -list` fails or times out, the run aborts instead of continuing with unverified DNSSEC/no-log filters.
 - Verification queries the real system path (`/etc/resolv.conf`) and reports `systemd-resolved` upstreams different from `127.0.0.1` or `::1`, instead of scanning a hard-coded list of addresses.
 - Spare `systemd.link` rules created by older Moriarty versions are removed, so only the NetworkManager identity layer remains.
 - Settings persist across reboots. The MAC and DHCP identity change after every reboot; the assigned IP address is still chosen by the DHCP server.
